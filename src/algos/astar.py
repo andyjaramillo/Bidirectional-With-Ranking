@@ -1,16 +1,17 @@
 import numpy as np
 from typing import Tuple, Set, Optional
-from SokobanGame import SokobanGame
+from src.algos.Algo import Algo
+from src.environment.SokobanGame import SokobanGame
 import heapq
-from astar_helper import to_categorical_tensor
+from src.utils.model_utils import to_categorical_tensor
 from typing import Literal
 from collections import OrderedDict
-from sample_random import samp_rand_norm
+from src.utils.sample_random import samp_rand_norm
 GameMap = {
     "Sokoban": SokobanGame
 }
 
-class Astar:
+class Astar(Algo):
     """
     A* search implementation for specific games (e.g., Sokoban).
     Supports standard, bidirectional, and neural-network-guided search.
@@ -72,7 +73,7 @@ class Astar:
         
         return self.current_map
     
-    def stepAstar(self, score_calc_type: Literal["BaseHeuristic", "MM", "Neural", "MM_Neural", "FF"]="BaseHeuristic", updateObject=None) -> Tuple[bool, Optional[list]]:
+    def step(self, score_calc_type: Literal["BaseHeuristic", "MM", "Neural", "MM_Neural", "FF"]="BaseHeuristic", updateObject=None) -> Tuple[bool, Optional[list]]:
 
         """
         Executes one step of the A* search algorithm.

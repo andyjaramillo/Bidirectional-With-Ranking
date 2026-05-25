@@ -1,6 +1,6 @@
 import pygame
 from pygame_files.drawGame import draw_game
-from SokobanGame import SokobanGame
+from src.environment.SokobanGame import SokobanGame
 pygame.init()
 screen = pygame.display.set_mode((640, 640))
 clock = pygame.time.Clock()

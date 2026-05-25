@@ -1,10 +1,10 @@
 import numpy as np
 import heapq
 from typing import Tuple, Dict, List, Optional, Set
-from SokobanGame import SokobanGame
+from src.environment.SokobanGame import SokobanGame
+import torch
 
-
-class BidirectionalF2FSearch:
+class TTBS:
     """
     Implementation of Top-to-Top Bidirectional Search (TTBS) for Sokoban.
     Based on the IJCAI 2020 paper:
@@ -133,18 +133,22 @@ class BidirectionalF2FSearch:
     def _f_score_nn(self, node_hash: str, g: int, opp_anchor_hash: Optional[str],
                  active_game: SokobanGame, opp_game: SokobanGame) -> float:
         """
-        f(s) = g(s) + h(s, d*)  — front-to-front cost estimate.
+        f(s) = g(s) + h_nn(s, anchor)  — pairwise-NN heuristic.
 
-        h is the MWPM-Manhattan distance between the box positions of s and
-        the opponent anchor d*, where d* is first flipped into the active
-        game's coordinate system.
+        The NN learns dist(s1, s2). For the front-to-front search we feed
+        (active node, opponent anchor flipped into the active frame). Same
+        call works for both directions because backward-Sokoban is the
+        inverse problem and dist is symmetric under that involution.
         """
         node_map = active_game.decodeMap(node_hash)
         if opp_anchor_hash is None:
-            return float(g + active_game.evaluateBoard(node_map))
-        opp_anchor_map = opp_game.decodeMap(opp_anchor_hash)
-        anchor_in_active = active_game.flipGame(opp_anchor_map)
-        h = active_game.evaluateBoard(node_map, anchor_in_active)
+           other = active_game.goal_map
+        else:
+            opp_anchor_map = opp_game.decodeMap(opp_anchor_hash)
+            other = active_game.flipGame(opp_anchor_map)
+        with torch.no_grad():
+            h = float(self.nn(node_map, active_game.target, other).item())
+        h = max(0.0, h)
         return float(g + h)
 
     def _push(self, heap: List, f: float, g: int, h: str) -> None:
@@ -172,11 +176,11 @@ class BidirectionalF2FSearch:
         self.anchor_f = start_hash
         self.anchor_b = goal_hash
 
-        # Initial f-scores with each side's start as anchor for the other
-        f_start = self._f_score(start_hash, 0, goal_hash,
-                                self.forward_game, self.backward_game)
-        f_goal  = self._f_score(goal_hash, 0, start_hash,
-                                self.backward_game, self.forward_game)
+        _f = self._f_score_nn if self.nn is not None else self._f_score
+        f_start = _f(start_hash, 0, goal_hash,
+                     self.forward_game, self.backward_game)
+        f_goal  = _f(goal_hash, 0, start_hash,
+                     self.backward_game, self.forward_game)
 
         self._push(self.open_f, f_start, 0, start_hash)
         self._push(self.open_b, f_goal,  0, goal_hash)
@@ -317,7 +321,11 @@ class BidirectionalF2FSearch:
                 return True, self.reconstruct_path()
 
             # ── Push successor ────────────────────────────────────────
-            v_f = self._f_score(v_hash, new_g, opp_anchor, game, opp_game)
+            
+            if self.nn is not None:
+                v_f = self._f_score_nn(v_hash, new_g, opp_anchor, game, opp_game)
+            else:
+                v_f = self._f_score(v_hash, new_g, opp_anchor, game, opp_game)
             self._push(heap, v_f, new_g, v_hash)
 
         return False, None

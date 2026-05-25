@@ -1,0 +1,5 @@
+epochs: 10
+learning_rate: 0.001
+algo: anchor
+batch_size: 1
+path_file: data/paths.txt

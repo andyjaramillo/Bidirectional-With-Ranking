@@ -348,7 +348,7 @@ class NN(nn.Module):
         op2 = self.op2(d2) # Output 2 (1 output, no final activation in original Keras)
 
         return op2
-    def initialize_cr_opt(self):
+    def initialize_cr_opt(self, config):
         """
         Initialize loss criterion and optimizer.
         
@@ -356,7 +356,7 @@ class NN(nn.Module):
             tuple: (criterion, optimizer)
         """
         criterion = nn.MSELoss()
-        optimizer = optim.Adam(self.parameters(), lr=0.001)
+        optimizer = optim.Adam(self.parameters(), lr=config.learning_rate)
         return criterion, optimizer
     def to_categorical(self, y, num_classes):
         """ 1-hot encodes a tensor """
@@ -441,16 +441,19 @@ class NNLightning(L.LightningModule):
         self.f = open(filepath, mode='w', newline='')
         self.writer = csv.writer(self.f)
         self.writer.writerow(headers)
+
+
     def forward(self, inputA, box_tar,inputB):
         return self.model(inputA, box_tar,inputB)
 
     def training_step(self, batch, batch_idx):
-        inputA, box_tar,inputB, target = batch
-        output = self(inputA, box_tar,inputB)
-        loss = self.criterion(output.squeeze(), target.float())
-        self.log('train_loss', loss)
-        self.writer.writerow([self.current_epoch, loss.item()])
-        return loss
+        state, path = batch
+        
+        # output = self(inputA, box_tar,inputB)
+        # loss = self.criterion(output.squeeze(), target.float())
+        # self.log('train_loss', loss)
+        # self.writer.writerow([self.current_epoch, loss.item()])
+        # return loss
 
     def validation_step(self, batch, batch_idx):
         inputA, box_tar,inputB, target = batch

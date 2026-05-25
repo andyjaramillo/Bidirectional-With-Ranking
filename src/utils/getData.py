@@ -1,4 +1,27 @@
 import numpy as np
+from io import TextIOWrapper
+
+class StateBox103Box:
+    duplicate: list
+    file_pointer: TextIOWrapper
+    index: int
+    def __init__(self):
+        self.duplicate = []
+        self.file_pointer = open("data/states10_3box.txt", "r")
+
+    def __iter__(self):
+        state = next(self.file_pointer)
+        while state in self.duplicate:
+
+            self.index += 1
+        
+        arr=np.asarray(state)
+        temp=np.reshape(arr, (10,10))
+        return temp
+    
+    def __exit__(self, exc_type, exc, tb):
+        self.file_pointer.close()
+        
 
 def get_data(useDummyData=False):
     """
@@ -15,7 +38,7 @@ def get_data(useDummyData=False):
     if useDummyData:
         f=open("test_box.txt", "r")
     else:
-        f=open("states10_3box.txt", "r")
+        f=open("data/states10_3box.txt", "r")
 
     array_s=[]
     array_a=[]
@@ -25,29 +48,22 @@ def get_data(useDummyData=False):
     i=0
     k=0
     for line in f:
-        if k < 10:
-            k+=1
-            continue
         array_s.append([int(x) for x in line.split()])
-        #print(i)
         if array_s[i] not in duplicate:
             arr=np.asarray(array_s[i])
             temp=np.reshape(arr, (10,10))
             all_states.append(temp)
             duplicate.append(array_s[i])
             index.append(i)
-        i+=1
-        # if i > 10:
-        #     break
-        # break
 
-    return all_states
     f.close()
+    return all_states
+    
 
 
 def get_paths():
     """
-    Load paths from a text file.
+    Load paths from a text file.clear
     
     Returns:
         list: List of paths, where each path is a list of game states.
@@ -61,3 +77,6 @@ def get_paths():
         all_paths.append(arr)
         array_s=[]
     return all_paths
+
+def decode_path(path, decode_fn):
+    return [decode_fn(state) for state in path]

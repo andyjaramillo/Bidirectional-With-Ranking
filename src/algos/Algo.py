@@ -1,30 +1,21 @@
 from __future__ import annotations
-from abc import abstractmethod
-from typing import List, Literal
+from abc import ABC, abstractmethod
+from typing import List
+class Algo(ABC):
 
-from SokobanGame import SokobanGame
-
-
-class SearchFrontier:
-    """
-    Manages the search frontier for the Anchor Search algorithm.
-    """
-    def __init__(self, start_state, isBackward, nn=None):
-        self.start_state = start_state
-        self.game = SokobanGame(start_state, isBackward)
-        self.nn = nn
-        # self.side = side
-        self.isBackward = isBackward
+    # @abstractmethod
+    # def __init__(self, state, isBackward, nn=None):
+    #     pass
 
     @abstractmethod
-    def step(self, other_front: SearchFrontier, **kwargs) -> Literal["SUCCESS", "FAILED", "FINISHED_EARLY", "CONTINUE"]:
+    def step(self, other_front: Algo, **kwargs):
         return NotImplementedError("Must be implemented by subclass")
     
     @abstractmethod
     def reconstructPath(self) -> List[str]:
         return NotImplementedError("Must be implemented by subclass")
     
-    def fullPath(self, other_front: SearchFrontier) -> List[str]:
+    def fullPath(self, other_front: Algo) -> List[str]:
         front_path = self.reconstructPath()
         back_path = other_front.reconstructPath()
         back_path_f_oriented = front_path + other_front.flipPath(back_path)
@@ -44,4 +35,3 @@ class SearchFrontier:
         for encodedPuzzle in path:
             new_path.append(self.game.encodeMap(self.game.flipGame(self.game.decodeMap(encodedPuzzle))))
         return new_path
-    
