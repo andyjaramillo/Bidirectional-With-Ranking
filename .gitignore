@@ -4,4 +4,4 @@ model_weights.pth
 ttbs_results.csv
 search_results.csv
 runs/
-data/paths.txt
+data/

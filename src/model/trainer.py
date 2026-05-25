@@ -78,7 +78,9 @@ class Trainer:
                         self.optimizer.zero_grad()
                         nn_costs_tensor, optimal_costs_tensor = self.create_pairwise_cost_paths(path=path)
                         loss = self.criterion(nn_costs_tensor, optimal_costs_tensor)
+                        correct = ((nn_costs_tensor == optimal_costs_tensor).float().sum()) / len(nn_costs_tensor)
                         self.writer.add_scalar('Loss/train', loss.item(), epoch)
+                        self.writer.add_scalar('Accuracy/train', correct.item(), epoch)
                         loss.backward()
                         self.optimizer.step()
                         pbar.update(1)
@@ -94,7 +96,10 @@ class Trainer:
                             loss = self.criterion(nn_costs_tensor, optimal_costs_tensor)
                             loss.backward()
                         loss = self.criterion(nn_costs_tensor, optimal_costs_tensor)
+                        correct = ((nn_costs_tensor == optimal_costs_tensor).float().sum()) / len(nn_costs_tensor)
                         self.writer.add_scalar('Loss/validation', loss.item(), epoch)
+                        self.writer.add_scalar('Accuracy/train', correct.item(), epoch)
+                        
 
         self.writer.close()
                     

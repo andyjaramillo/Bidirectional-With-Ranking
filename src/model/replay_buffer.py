@@ -53,7 +53,7 @@ class ReplayBuffer:
         ## now we can loop over the pairs and append the actual states into the buffer
 
         for i,j in pairs:
-            dist = i - j
+            dist = j - i
             self.add(decoded_path[i], target, decoded_path[j], dist)
 
     def sample(self, batch_size):
