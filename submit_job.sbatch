@@ -36,4 +36,4 @@ echo "Using Python from: $(which python)"
 echo "Active environment: $CONDA_DEFAULT_ENV"
 
 # 6. Run your code
-~/miniconda3/envs/bidirectional_313/bin/python main.py --with_learning=on --with_training=yes --anchor_search=yes
+~/miniconda3/envs/bidirectional_313/bin/python main.py 

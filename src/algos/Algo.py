@@ -1,7 +1,11 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List
+from src.environment.SokobanGame import SokobanGame
+from src.model.nn import NN
 class Algo(ABC):
+    game: SokobanGame
+    nn: NN
 
     # @abstractmethod
     # def __init__(self, state, isBackward, nn=None):
@@ -35,3 +39,6 @@ class Algo(ABC):
         for encodedPuzzle in path:
             new_path.append(self.game.encodeMap(self.game.flipGame(self.game.decodeMap(encodedPuzzle))))
         return new_path
+
+    def reinit(self, state):
+        self.__init__(state, self.nn)

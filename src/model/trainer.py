@@ -21,8 +21,7 @@ class Trainer:
         self.epochs = config.epochs
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
         self.criterion, self.optimizer = self.model.initialize_cr_opt(config)
-        self.front = self.Algo(self.states[0], False, nn=self.model)
-        self.back = self.Algo(self.front.game.initializeBackwardPuzzle(self.states[0]), True, nn=self.model)
+        self.search = self.Algo(self.states[0], nn=self.model)
         self.buffer = ReplayBuffer()
         ## tensorboard logs
         self.writer = SummaryWriter(f'runs/experiment_{config.algo}')
@@ -36,8 +35,8 @@ class Trainer:
         optimal_costs = []
 
         for encoded_state in path:
-            nn_value = self.model(self.front.game.decodeMap(encoded_state), self.front.game.target, self.front.game.goal_map)
-            optimal_value = self.front.game.evaluateBoard((self.front.game.decodeMap(encoded_state)))
+            nn_value = self.model(self.search.game.decodeMap(encoded_state), self.search.game.target, self.search.game.goal_map)
+            optimal_value = self.search.game.evaluateBoard((self.search.game.decodeMap(encoded_state)))
             nn_costs.append(nn_value)
             optimal_costs.append(optimal_value)
         nn_costs_tensor = torch.stack(nn_costs).to(self.device)
@@ -47,8 +46,8 @@ class Trainer:
     
 
     def create_pairwise_cost_paths(self, path):
-        decoded_path = decode_path(path, self.front.game.decodeMap)
-        self.buffer.add_pairs_from_path(decoded_path=decoded_path, target=self.front.game.target)
+        decoded_path = decode_path(path, self.search.game.decodeMap)
+        self.buffer.add_pairs_from_path(decoded_path=decoded_path, target=self.search.game.target)
 
         sample = self.buffer.sample(64)
         
@@ -71,8 +70,7 @@ class Trainer:
                 for index, line in enumerate(self.train_):
                     path = line.strip().split(",")
                     state = self.states[index]
-                    self.front = self.Algo(state, False)
-                    self.back = self.Algo(self.front.game.initializeBackwardPuzzle(state), True)
+                    self.search.reinit(state)
                     
                     for _ in range(self.times_to_sample):
                         self.optimizer.zero_grad()
@@ -88,8 +86,7 @@ class Trainer:
                     for index, line in enumerate(self.val):
                         path = line.strip().split(",")
                         state = self.states[index]
-                        self.front = self.Algo(state, False)
-                        self.back = self.Algo(self.front.game.initializeBackwardPuzzle(state), True)
+                        self.search.reinit(state)
                         for _ in range(self.times_to_sample):
                             self.optimizer.zero_grad()
                             nn_costs_tensor, optimal_costs_tensor = self.create_pairwise_cost_paths(path=path)

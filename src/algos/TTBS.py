@@ -3,8 +3,8 @@ import heapq
 from typing import Tuple, Dict, List, Optional, Set
 from src.environment.SokobanGame import SokobanGame
 import torch
-
-class TTBS:
+from src.algos.Algo import Algo
+class TTBS(Algo):
     """
     Implementation of Top-to-Top Bidirectional Search (TTBS) for Sokoban.
     Based on the IJCAI 2020 paper:
@@ -47,14 +47,14 @@ class TTBS:
           hashes can be compared for intersection detection.
     """
 
-    def __init__(self, puzzle: np.ndarray, nn=None):
+    def __init__(self, puzzle: np.ndarray,  nn=None):
         self.game_name = "Sokoban"
         self.puzzle = puzzle
         self.nn = nn
 
         # ── Game instances ─────────────────────────────────────────────
-        self.forward_game = SokobanGame(puzzle, isBackward=False)
-        backward_puzzle = self.forward_game.initializeBackwardPuzzle(puzzle)
+        self.game = SokobanGame(puzzle, isBackward=False)
+        backward_puzzle = self.game.initializeBackwardPuzzle(puzzle)
         self.backward_game = SokobanGame(backward_puzzle, isBackward=True)
 
         # ── Open lists: min-heap of (f, neg_g, hash) ──────────────────
@@ -164,7 +164,7 @@ class TTBS:
 
     def init_search(self) -> None:
         """Initialise both search frontiers."""
-        start_hash = self.forward_game.encodeMap(self.puzzle)
+        start_hash = self.game.encodeMap(self.puzzle)
         goal_hash  = self.backward_game.encodeMap(self.backward_game.puzzle)
 
         self.g_f[start_hash] = 0
@@ -178,9 +178,9 @@ class TTBS:
 
         _f = self._f_score_nn if self.nn is not None else self._f_score
         f_start = _f(start_hash, 0, goal_hash,
-                     self.forward_game, self.backward_game)
+                     self.game, self.backward_game)
         f_goal  = _f(goal_hash, 0, start_hash,
-                     self.backward_game, self.forward_game)
+                     self.backward_game, self.game)
 
         self._push(self.open_f, f_start, 0, start_hash)
         self._push(self.open_b, f_goal,  0, goal_hash)
@@ -209,7 +209,7 @@ class TTBS:
             bkey_map_self= self.bkey_to_hash_f
             bkey_map_opp = self.bkey_to_hash_b
             last_tgt     = self.last_target_f
-            game         = self.forward_game
+            game         = self.game
             opp_game     = self.backward_game
             opp_g_map    = self.g_b
             cur_anch     = 'anchor_f'
@@ -225,7 +225,7 @@ class TTBS:
             bkey_map_opp = self.bkey_to_hash_f
             last_tgt     = self.last_target_b
             game         = self.backward_game
-            opp_game     = self.forward_game
+            opp_game     = self.game
             opp_g_map    = self.g_f
             cur_anch     = 'anchor_b'
             opp_anch     = 'anchor_f'
@@ -359,7 +359,7 @@ class TTBS:
     # Path reconstruction
     # ──────────────────────────────────────────────────────────────────
 
-    def reconstruct_path(self) -> List[str]:
+    def reconstructPath(self) -> List[str]:
         """
         Reconstruct start → goal as a list of forward-game encoded maps.
 
@@ -383,8 +383,8 @@ class TTBS:
         curr = self.parent_b.get(self.meeting_bwd)   # skip meeting (already in path_f)
         while curr is not None:
             bwd_map = self.backward_game.decodeMap(curr)
-            fwd_map = self.forward_game.flipGame(bwd_map)
-            path_b.append(self.forward_game.encodeMap(fwd_map))
+            fwd_map = self.game.flipGame(bwd_map)
+            path_b.append(self.game.encodeMap(fwd_map))
             curr = self.parent_b.get(curr)
 
         return path_f + path_b

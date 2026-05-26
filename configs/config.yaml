@@ -1,5 +1,5 @@
 epochs: 10
 learning_rate: 0.001
-algo: anchor
+algo: ttbs
 batch_size: 1
 path_file: data/paths10_3box.txt

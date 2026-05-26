@@ -466,3 +466,5 @@ class NNLightning(L.LightningModule):
     
     def on_fit_end(self, trainer, pl_module):
         self.f.close()
+
+        
