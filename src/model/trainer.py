@@ -19,8 +19,10 @@ class Trainer:
 
         print("--- DATA LOADED ----")
         self.dataset = self.path_file.readlines()[:10]
+        self.test = self.dataset[-(int(0.1*self.dataset)):]
+        self.dataset = self.dataset[:len(self.dataset) - len(self.test)]
         generator1 = torch.Generator().manual_seed(42)
-        self.train_, self.val, self.test = random_split(self.dataset, [0.7, 0.2, 0.1], generator=generator1)
+        self.train_, self.val = random_split(self.dataset, [0.8, 0.2], generator=generator1)
         self.model = SmallerCNN(10)
         self.epochs = config.epochs
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
