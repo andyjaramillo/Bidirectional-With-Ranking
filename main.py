@@ -19,15 +19,6 @@ def parse_arguments():
     search_group = parser.add_argument_group("Search Algorithm Settings")
 
     search_group.add_argument(
-        '--learning', '--with_learning',
-        dest='learning',
-        type=str,
-        default="off",
-        choices=["on", "off"],
-        help="Enable neural network learning"
-    )
-
-    search_group.add_argument(
         '--config', 
         dest='config',
         type=str,
@@ -35,54 +26,14 @@ def parse_arguments():
         help="Path to the configuration file (YAML or JSON)"
     )
 
-
     search_group.add_argument(
-        '--with_training',
+        '--ckpt_path', 
+        dest='ckpt_path',
         type=str,
-        default="no",
-        choices=["yes", "no"],
-        help="Enable neural network training"
-    )
-    search_group.add_argument(
-        "--front_to_front",
-        type=str,
-        default="no",
-        choices=["yes", "no"],
-        help="Use Front-to-Front learning instead of Meet-in-the-Middle"
-    )
-    search_group.add_argument(
-        "--anchor_search",
-        type=str,
-        default="no",
-        choices=["yes", "no"],
-        help="Use Anchor Search"
-    )
-    search_group.add_argument(
-        "--ttbs",
-        type=str,
-        default="no",
-        choices=["yes", "no"],
-        help="Use Top-to-Top Bidirectional Search (TTBS) from IJCAI 2020"
+        default="",
+        help="Path to the .pt weights"
     )
 
-    # --- Experiment & Environment ---
-    exp_group = parser.add_argument_group("Experiment & Environment Settings")
-    exp_group.add_argument(
-        "--noise", "--with_noise",
-        dest='noise',
-        type=str,
-        default="off",
-        choices=["off", "additive", "multiplicative"],
-        help="Type of noise to add to heuristic scores"
-    )
-    exp_group.add_argument(
-        "--dummy_data", "--with_dummy_data",
-        dest='dummy_data',
-        type=str,
-        default="No",
-        choices=["Yes", "No"],
-        help="Use simple puzzles from test_box.txt for development"
-    )
 
     return parser.parse_args()
 
@@ -91,4 +42,8 @@ if __name__ == "__main__":
     args = parse_arguments()
     config = OmegaConf.load(args.config)
     trainer = Trainer(config) 
-    trainer.train()   
+    if args.ckpt_path != "":
+        trainer.load_checkpoint(args.ckpt_path)
+        trainer.test()
+    else:
+        trainer.train()   

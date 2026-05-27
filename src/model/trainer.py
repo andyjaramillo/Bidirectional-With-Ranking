@@ -20,8 +20,8 @@ class Trainer:
         print("--- DATA LOADED ----")
         self.dataset = self.path_file.readlines()[:10]
         self.test_ = self.states[-(int(0.1*len(self.states))):]
-        self.dataset = self.dataset[:len(self.dataset) - len(self.test)]
-        self.states = self.states[:len(self.states) - len(self.test)]
+        self.dataset = self.dataset[:len(self.dataset) - len(self.test_)]
+        self.states = self.states[:len(self.states) - len(self.test_)]
         generator1 = torch.Generator().manual_seed(42)
         self.train_, self.val = random_split(self.dataset, [0.8, 0.2], generator=generator1)
         self.model = SmallerCNN(10)
@@ -104,15 +104,15 @@ class Trainer:
         self.writer.close()
 
     def load_checkpoint(self,ckpt_path):
-        self.model = torch.load(ckpt_path, weights_only=True)
+        self.model.load_state_dict(torch.load(ckpt_path))
         self.model.eval()
 
     def test(self):
         nn_scores = []
         base_scores = []
-        nn = self.search.nn
+        
         with torch.no_grad():
-            for index, state in enumerate(tqdm(self.test, desc="testing states")):
+            for index, state in enumerate(tqdm(self.test_, desc="testing states")):
                 ## with nn 
                 self.search.reinit(state)
                 nn_iterations = self.search.test_search()
@@ -120,7 +120,7 @@ class Trainer:
                 base_iterations = self.search.test_search()
                 nn_scores.append(nn_iterations)
                 base_scores.append(base_iterations)
-                self.search.nn = nn
+                self.search.nn = self.model
         print(f'NN Average iterations {sum(nn_scores)/len(nn_scores)}')
         print(f'Base Average iterations {sum(base_scores)/len(base_scores)}')
         print(f"Full scores {nn_scores, base_scores}")
