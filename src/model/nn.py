@@ -246,7 +246,7 @@ class NN(nn.Module):
         # Head 2 Classifier (Input 370 channels from last concat)
         self.avg_pool2 = nn.AdaptiveAvgPool2d((1, 1))
         self.dense2 = nn.Linear(370, 256)
-        self.op2 = nn.Linear(256, 1) # 1 output
+        self.op2 = nn.Linear(256, 1) # 1 output 
 
 
     def forward(self, inputA, box_tar,inputB):
@@ -467,4 +467,126 @@ class NNLightning(L.LightningModule):
     def on_fit_end(self, trainer, pl_module):
         self.f.close()
 
+
+class SmallerCNN(nn.Module):
+
+    def __init__(self,dim):
+        super().__init__()
+        self.dim = dim
+        self.relu = nn.ReLU() 
+        self.batch_norm = nn.BatchNorm2d(64)
+        self.dropout = nn.Dropout(0.2)
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.op2 = nn.Linear(74, 1)
+
+        self.conv1 = nn.Conv2d(10, 64, kernel_size=3, padding=1)
+
+        self.conv_blocks = nn.ModuleList([
+            nn.Conv2d(74, 64, kernel_size=3, padding=1) for _ in range(3)
+        ])
+
+    def initialize_cr_opt(self, config):
+        """
+        Initialize loss criterion and optimizer.
         
+        Returns:
+            tuple: (criterion, optimizer)
+        """
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(self.parameters(), lr=config.learning_rate)
+        return criterion, optimizer
+
+    def to_categorical(self, y, num_classes):
+        """ 1-hot encodes a tensor """
+        return np.eye(num_classes, dtype='uint8')[y]
+
+    def forward(self, inputA, box_tar,inputB):
+        inputA, inputB = self.reshapeInputs(inputA, box_tar,inputB)
+        # The Keras model assumes N, H, W, C. PyTorch uses N, C, H, W.
+        # Permute inputs from (N, H, W, 5) to (N, 5, H, W)
+        inputA = torch.from_numpy(inputA).permute(0, 3, 1, 2).float()
+        inputB = torch.from_numpy(inputB).permute(0, 3, 1, 2).float()
+
+        inp = torch.cat([inputA, inputB], dim=1)
+        
+        out = self.conv1(inp) ## output shape (N, C, H, W)
+        b = self.relu(out) # (N, 64, H, W)
+        x = torch.cat([b, inp], dim=1) # b1: (N, 74, H, W)
+        
+        for conv in self.conv_blocks:
+            x_out = self.relu(conv(x))
+            x_out = self.batch_norm(x_out)
+            x_out = self.dropout(x_out)
+            x = torch.cat([x_out, inp], dim=1)
+        x = torch.cat([x_out, inp], dim=1)
+        f2 = self.avg_pool(x).flatten(1)
+        op2 = self.op2(f2)
+
+        return op2
+
+    def reshapeInputs(self,state, box_tar,goal_state):
+        """
+        Perform inference for a single state.
+        
+        Args:
+            state (np.ndarray): Current state.
+            box_tar (list): Target locations. (3,2) So 3 targets with each being (x,y)
+            goal_state (np.ndarray): Goal state.
+            
+        Returns:
+            float: Predicted value.
+        """
+        box_on_T=[]
+
+        current_box_locations =  list(zip(*(np.where(state == 4))))
+
+        # for i in range(len(box_tar)):
+        #     ## where the boxes are
+        #     if state[box_tar[i][0]][box_tar[i][1]] == 4:
+        #         box_on_T.append([box_tar[i][0],box_tar[i][1]])
+        ## if completed
+        if len(box_on_T) == len(box_tar):
+            return 0
+
+        old_state = state   ## (10, 10) game
+  
+        categorical_state = self.to_categorical_tensor(old_state,box_tar,10,10) ## (10, 10, 5) categorical state
+        # print(categorical_state)
+        categorical_goal_state = self.to_categorical_tensor(goal_state, box_tar, 10, 10)
+        
+        return categorical_state.reshape(1,10,10,5), categorical_goal_state.reshape(1,10,10,5)
+
+
+    def to_categorical_tensor(self, x3d,Tar,dim1,dim2):
+        """
+        Convert a 3D tensor to a categorical one-hot representation.
+        
+        Args:
+            x3d (torch.Tensor): Input tensor. (10,10)
+            Tar (list): Target locations.
+            dim1 (int): Height.
+            dim2 (int): Width.
+            
+        Returns:
+            torch.Tensor: Categorical tensor.
+        """
+        find_box_pos = np.where(x3d == 4)
+        pos=list(zip(*(find_box_pos))) ## (3,2) list of positions of the boxes
+        x1d = x3d.ravel() ## (100,) flatten the 3d tensor to 1d
+        
+        y1d = self.to_categorical( x1d, 5 ) ## (100, 5 )
+        
+        y4d = y1d.reshape( [dim1, dim2, 5]) ## (10, 10, 5)
+   
+        for i in range(len(pos)):
+            y4d[Tar[i][0]][Tar[i][1]][2] = 1
+            y4d[pos[i][0]][pos[i][1]][2] = 1
+        return y4d
+
+        
+
+        
+
+
+
+

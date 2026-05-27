@@ -23,7 +23,7 @@ class StateBox103Box:
         self.file_pointer.close()
         
 
-def get_data(useDummyData=False):
+def get_data(useDummyData=False, max_subset=-1):
     """
     Load game states from a text file.
     
@@ -47,14 +47,15 @@ def get_data(useDummyData=False):
 
     i=0
     k=0
+    max_index=max_subset
     for line in f:
-        array_s.append([int(x) for x in line.split()])
-        if array_s[i] not in duplicate:
-            arr=np.asarray(array_s[i])
-            temp=np.reshape(arr, (10,10))
-            all_states.append(temp)
-            duplicate.append(array_s[i])
-            index.append(i)
+        arr=np.asarray([int(x) for x in line.split()])
+        temp=np.reshape(arr, (10,10))
+        all_states.append(temp)
+        i += 1
+        if max_index != -1 and i >= max_index:
+            break
+
 
     f.close()
     return all_states
