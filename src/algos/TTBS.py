@@ -409,3 +409,20 @@ class TTBS(Algo):
             if found:
                 return path
         return None
+
+    def test_search(self, max_iterations: int = 10000) -> Optional[List[str]]:
+        """
+        Execute TTBS bidirectional search.
+
+        Args:
+            max_iterations: Expansion budget.
+
+        Returns:
+            List of forward-encoded map strings (start → goal), or None.
+        """
+        self.init_search()
+        for _ in range(max_iterations):
+            found, path = self.step()
+            if found:
+                return self.iteration
+        return None
