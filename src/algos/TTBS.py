@@ -359,7 +359,7 @@ class TTBS(Algo):
     # Path reconstruction
     # ──────────────────────────────────────────────────────────────────
 
-    def reconstructPath(self) -> List[str]:
+    def reconstruct_path(self) -> List[str]:
         """
         Reconstruct start → goal as a list of forward-game encoded maps.
 

@@ -16,12 +16,12 @@ class Algo(ABC):
         return NotImplementedError("Must be implemented by subclass")
     
     @abstractmethod
-    def reconstructPath(self) -> List[str]:
+    def reconstruct_path(self) -> List[str]:
         return NotImplementedError("Must be implemented by subclass")
     
     def fullPath(self, other_front: Algo) -> List[str]:
-        front_path = self.reconstructPath()
-        back_path = other_front.reconstructPath()
+        front_path = self.reconstruct_path()
+        back_path = other_front.reconstruct_path()
         back_path_f_oriented = front_path + other_front.flipPath(back_path)
         return back_path_f_oriented
 
