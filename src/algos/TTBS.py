@@ -74,13 +74,26 @@ class TTBS(Algo):
         self.closed_f: Set[str] = set()
         self.closed_b: Set[str] = set()
 
-        # ── Box-key closed sets for O(1) intersection checks ──────────
-        # Each entry is a canonical box-position string in the *forward*
-        # game's coordinate system.
-        self.bkey_closed_f: Set[str] = set()   # forward box keys
-        self.bkey_closed_b: Set[str] = set()   # backward box keys (flipped to fwd)
+        # ── Full transition graph induced over visited states ──────────
+        # parent_f / parent_b only record one (best-g) predecessor per
+        # state, so as a graph they form a tree. We additionally record
+        # every successor edge generated during expansion — including
+        # transitions into already-closed nodes — so post-hoc analyses
+        # can run shortest-path queries over the *actual* graph induced
+        # by the search, not just its spanning tree.
 
-        # Map from box-key → encoded hash (forward preferred per side)
+        self.edges_f: Dict[str, Set[str]] = {}
+        self.edges_b: Dict[str, Set[str]] = {}
+
+                # Full-state keys: the encoded forward-frame board (agent + boxes).
+        self.fkey_closed_f: Set[str] = set()
+        self.fkey_closed_b: Set[str] = set()   # backward states flipped to fwd
+        self.fkey_to_hash_f: Dict[str, str] = {}
+        self.fkey_to_hash_b: Dict[str, str] = {}
+
+        # Box-only keys (canonical box-position bytes in the forward frame).
+        self.bkey_closed_f: Set[str] = set()
+        self.bkey_closed_b: Set[str] = set()   # backward box keys (flipped to fwd)
         self.bkey_to_hash_f: Dict[str, str] = {}
         self.bkey_to_hash_b: Dict[str, str] = {}
 
@@ -112,6 +125,22 @@ class TTBS(Algo):
         """
         locs = sorted(zip(*np.where(board == 4)))
         return str(locs)
+    
+    def _full_key(self, board: np.ndarray) -> bytes:
+        """Canonical FULL-state key: positions of every movable object —
+        the agent (3) and all boxes (4).
+
+        This is the domain-agnostic notion of "the same state": only the
+        things that move are part of the state; walls and goal markers are
+        static background. Crucially it ignores the 2-vs-1 (target-vs-floor)
+        cell marking, which differs between the forward frame and a flipped
+        backward state, so the two frontiers can be compared frame-to-frame.
+        """
+        r3, c3 = np.where(board == 3)
+        rows4, cols4 = np.where(board == 4)
+        return (r3.astype(np.uint8).tobytes() + c3.astype(np.uint8).tobytes()
+                + b"|" + rows4.astype(np.uint8).tobytes()
+                + cols4.astype(np.uint8).tobytes())
 
     def _f_score(self, node_hash: str, g: int, opp_anchor_hash: Optional[str],
                  active_game: SokobanGame, opp_game: SokobanGame) -> float:
@@ -204,12 +233,16 @@ class TTBS(Algo):
             g_map        = self.g_f
             parent_map   = self.parent_f
             closed       = self.closed_f
+            fkey_closed  = self.fkey_closed_f
+            fkey_opp     = self.fkey_closed_b
+            fkey_map_self= self.fkey_to_hash_f
+            fkey_map_opp = self.fkey_to_hash_b
             bkey_closed  = self.bkey_closed_f
             bkey_opp     = self.bkey_closed_b
             bkey_map_self= self.bkey_to_hash_f
             bkey_map_opp = self.bkey_to_hash_b
             last_tgt     = self.last_target_f
-            game         = self.game
+            game         = self.forward_game
             opp_game     = self.backward_game
             opp_g_map    = self.g_b
             cur_anch     = 'anchor_f'
@@ -219,13 +252,17 @@ class TTBS(Algo):
             g_map        = self.g_b
             parent_map   = self.parent_b
             closed       = self.closed_b
+            fkey_closed  = self.fkey_closed_b
+            fkey_opp     = self.fkey_closed_f
+            fkey_map_self= self.fkey_to_hash_b
+            fkey_map_opp = self.fkey_to_hash_f
             bkey_closed  = self.bkey_closed_b
             bkey_opp     = self.bkey_closed_f
             bkey_map_self= self.bkey_to_hash_b
             bkey_map_opp = self.bkey_to_hash_f
             last_tgt     = self.last_target_b
             game         = self.backward_game
-            opp_game     = self.game
+            opp_game     = self.forward_game
             opp_g_map    = self.g_f
             cur_anch     = 'anchor_b'
             opp_anch     = 'anchor_f'
@@ -264,11 +301,13 @@ class TTBS(Algo):
 
         # ── Close node ────────────────────────────────────────────────
         closed.add(u_hash)
-
-        # Register box-key for this side
+        # Register meeting keys for this side (forward-frame).
         u_map    = game.decodeMap(u_hash)
         u_fwd    = u_map if is_forward else game.flipGame(u_map)
-        bk       = self._box_key(u_fwd)
+        fk       = self._full_key(u_fwd)        # full-state key (agent + boxes)
+        fkey_closed.add(fk)
+        fkey_map_self[fk] = u_hash
+        bk       = self._box_key(u_fwd)         # box-only key (legacy criterion)
         bkey_closed.add(bk)
         bkey_map_self[bk] = u_hash
 
@@ -278,6 +317,13 @@ class TTBS(Algo):
         # ── Expand successors ─────────────────────────────────────────
         game.puzzle = u_map   # required by availableStates
         player_loc = game.getPlayerLocation(u_map)
+
+        # Adjacency list for the actual transition graph (not the spanning
+        # tree). We populate this for *every* generated successor, even
+        # ones that are already closed or g-dominated, because the post-
+        # hoc path-refinement BFS needs the true graph topology.
+        edges_map = self.edges_f if is_forward else self.edges_b
+        u_adj = edges_map.setdefault(u_hash, set())
 
         for _dir, action in game.availableStates(player_loc):
             v_map = action.moveAndUpdateBoard(player_loc, u_map)
@@ -291,6 +337,11 @@ class TTBS(Algo):
             v_hash = game.encodeMap(v_map)
             new_g  = g + 1
 
+            # Record the transition u→v in the induced graph regardless
+            # of whether v is already closed or g-dominated. This is what
+            # distinguishes the transition graph from the parent-tree.
+            u_adj.add(v_hash)
+
             if v_hash in closed:
                 continue
             if new_g >= g_map.get(v_hash, float('inf')):
@@ -303,10 +354,13 @@ class TTBS(Algo):
 
             # ── Intersection check (O(1)) ─────────────────────────────
             v_fwd = v_map if is_forward else game.flipGame(v_map)
-            bk_v  = self._box_key(v_fwd)
+            
+            key_v  = self._full_key(v_fwd)
+            opp_set = fkey_opp
+            opp_map = fkey_map_opp
 
-            if bk_v in bkey_opp:
-                opp_hash = bkey_map_opp[bk_v]
+            if key_v in opp_set:
+                opp_hash = opp_map[key_v]
                 opp_g    = opp_g_map.get(opp_hash, float('inf'))
                 cost     = new_g + opp_g
                 if cost < self.U:
