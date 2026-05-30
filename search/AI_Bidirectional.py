@@ -19,8 +19,8 @@ class BidirectionalF2FSearch:
 
         f(s) = g(s) + h(s, d*)
 
-    where d* is the opponent's current anchor and h is the F2F heuristic
-    (here: MWPM Manhattan distance between box positions).
+    where d* is the opponent's current anchor and h is the F2F heuristic —
+    either the analytic MWPM-Manhattan box distance or a learned NN.
 
     When the opponent's anchor changes, stored f-scores may be stale.
     TTBS handles this via lazy re-evaluation: when a node is popped from
@@ -28,9 +28,11 @@ class BidirectionalF2FSearch:
     re-scored and re-inserted (the "TTBS re-evaluation" mechanism). This
     avoids the full open-list re-sort needed by d-node retargeting (DNR).
 
-    Convergence is detected when a successor's box configuration matches
-    a state hash already in the opponent's closed set (O(1) lookup via a
-    precomputed box-key set maintained alongside each closed set).
+    Convergence is detected when a freshly generated successor matches a
+    state already CLOSED on the opposite side, keyed by the full forward-
+    frame state — agent position AND box positions (O(1) set lookup). The
+    full-state key makes the seam a genuinely shared state, so the
+    reconstructed plan is a valid step-by-step path.
 
     State Representation (SokobanGame tile values):
         0 = wall
@@ -43,8 +45,8 @@ class BidirectionalF2FSearch:
         - Forward game: boxes start scattered, goals are value-2 cells.
         - Backward game: initializeBackwardPuzzle swaps 2<->4, so boxes
           start on goal cells and the backward search "pulls" them off.
-        - flipGame converts between the two orientations so their box
-          hashes can be compared for intersection detection.
+        - flipGame converts between the two orientations so their full-
+          state keys can be compared for intersection detection.
     """
 
     def __init__(self, puzzle: np.ndarray, nn=None):
@@ -161,34 +163,65 @@ class BidirectionalF2FSearch:
         h = active_game.evaluateBoard(node_map, anchor_in_active)
         return float(g + h)
 
-    def _f_score_nn(self, node_hash: str, g: int, opp_anchor_hash: Optional[str],
-                 active_game: SokobanGame, opp_game: SokobanGame) -> float:
-        """f(s) = g(s) + max(0, h_nn(s, anchor)).
-
-        h_nn is the learned model's predicted distance from the node to the
-        opposite frontier's anchor (flipped into the active frame). We cache
-        the decoded/flipped opp_anchor map so multiple calls within the same
-        `_expand` (e.g. during lazy re-evaluation) skip the redo.
+    def _anchor_other(self, opp_anchor_hash: Optional[str],
+                      active_game: SokobanGame, opp_game: SokobanGame):
+        """The opposite-frontier anchor flipped into the active frame, cached
+        per (active_game, anchor). The decode/flip is shared by every node
+        scored against this anchor within a round — single-node lazy
+        re-evaluation and batched successor scoring alike.
         """
-        import torch
-        node_map = active_game.decodeMap(node_hash)
         cache = getattr(self, "_other_cache", None)
         if cache is None:
             cache = {}
             self._other_cache = cache
         ck = (id(active_game), opp_anchor_hash)
         if ck in cache:
-            other = cache[ck]
+            return cache[ck]
+        if opp_anchor_hash is None:
+            other = active_game.goal_map
         else:
-            if opp_anchor_hash is None:
-                other = active_game.goal_map
-            else:
-                other = active_game.flipGame(opp_game.decodeMap(opp_anchor_hash))
-            cache[ck] = other
+            other = active_game.flipGame(opp_game.decodeMap(opp_anchor_hash))
+        cache[ck] = other
+        return other
+
+    def _f_score_nn(self, node_hash: str, g: int, opp_anchor_hash: Optional[str],
+                 active_game: SokobanGame, opp_game: SokobanGame) -> float:
+        """f(s) = g(s) + max(0, h_nn(s, anchor)).
+
+        h_nn is the learned model's predicted distance from the node to the
+        opposite frontier's anchor (flipped into the active frame).
+        """
+        import torch
+        node_map = active_game.decodeMap(node_hash)
+        other = self._anchor_other(opp_anchor_hash, active_game, opp_game)
         with torch.no_grad():
             h_nn = float(self.nn(node_map, active_game.target, other).item())
         h = max(0.0, h_nn)
         return float((g + h) if self.use_g_in_f else h)
+
+    def _f_score_nn_batch(self, node_maps, g_list, opp_anchor_hash: Optional[str],
+                          active_game: SokobanGame, opp_game: SokobanGame):
+        """Batched f-score for several nodes scored against ONE anchor.
+
+        Axis-1 within-node batching: the survivors of a single expansion are
+        all scored in one ``forward_batch`` call, amortizing the per-call
+        dispatch (and, on a GPU/MPS twin, kernel-launch) overhead that
+        dominates batch-1 inference of this tiny model. Order-preserving:
+        produces identical f-scores to per-node ``_f_score_nn``, just in one
+        shot. All survivors share the round's (target, anchor), so the batch
+        differs only in the board state.
+        """
+        import torch
+        if not node_maps:
+            return []
+        other = self._anchor_other(opp_anchor_hash, active_game, opp_game)
+        n = len(node_maps)
+        with torch.no_grad():
+            h = self.nn.forward_batch(
+                node_maps, [active_game.target] * n, [other] * n).clamp_min(0.0)
+        if self.use_g_in_f:
+            h = h + torch.tensor(g_list, dtype=h.dtype, device=h.device)
+        return h.tolist()
 
     def _push(self, heap: List, f: float, g: int, h: str) -> None:
         heapq.heappush(heap, (f, -g, h))   # neg_g: deeper = smaller = better tie
@@ -326,6 +359,14 @@ class BidirectionalF2FSearch:
         edges_map = self.edges_f if is_forward else self.edges_b
         u_adj = edges_map.setdefault(u_hash, set())
 
+        # ── Phase 1: generate, filter, intersection-check ──────────────
+        # Collect the survivors (those that still need an f-score) so the
+        # learned heuristic can score them all in ONE batched NN call below
+        # (Axis-1 within-node batching). The intersection check can short-
+        # circuit the whole expansion on a meeting, in which case zero
+        # inference is spent. Order/node-count are unchanged vs. per-node
+        # scoring — this only groups the inference.
+        survivors = []   # list of (v_hash, new_g, v_map)
         for _dir, action in game.availableStates(player_loc):
             v_map = action.moveAndUpdateBoard(player_loc, u_map)
             if v_map is None:
@@ -377,12 +418,20 @@ class BidirectionalF2FSearch:
                 # Satisficing: return immediately on first intersection.
                 return True, self.reconstruct_path()
 
-            # ── Push successor ────────────────────────────────────────
-            if self.nn is not None:
-                v_f = self._f_score_nn(v_hash, new_g, opp_anchor, game, opp_game)
-            else:
+            survivors.append((v_hash, new_g, v_map))
+
+        # ── Phase 2: score survivors and push ──────────────────────────
+        if self.nn is not None:
+            f_scores = self._f_score_nn_batch(
+                [vm for _, _, vm in survivors],
+                [ng for _, ng, _ in survivors],
+                opp_anchor, game, opp_game)
+            for (v_hash, new_g, _), v_f in zip(survivors, f_scores):
+                self._push(heap, v_f, new_g, v_hash)
+        else:
+            for v_hash, new_g, _ in survivors:
                 v_f = self._f_score(v_hash, new_g, opp_anchor, game, opp_game)
-            self._push(heap, v_f, new_g, v_hash)
+                self._push(heap, v_f, new_g, v_hash)
 
         return False, None
 
