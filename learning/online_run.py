@@ -27,7 +27,7 @@ from collections import deque
 import numpy as np
 import torch
 
-from game.getData import get_data
+from game.getData import get_solvable_data
 from learning.nn import build_model
 from search.AI_Bidirectional import BidirectionalF2FSearch
 from learning.replay_buffer import ReplayBuffer
@@ -203,8 +203,11 @@ def rolling_mean(xs, w):
 
 
 # ── Load puzzles ───────────────────────────────────────────────────────────
-puzzles = get_data(False)[:N_TOTAL]
-print(f"Using {N_TOTAL} puzzles from the dataset.")
+# Solvable-only benchmark (data/solvable10_3box.txt): the player-goal-pinned
+# unmeetable artifacts are filtered out, so every puzzle here contributes a
+# real training signal. Built by analysis/build_solvable_benchmark.py.
+puzzles = get_solvable_data(limit=N_TOTAL)
+print(f"Using {len(puzzles)} solvable puzzles from the filtered dataset.")
 
 
 # ── Phase A: baseline (no NN) ──────────────────────────────────────────────
