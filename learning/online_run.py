@@ -39,7 +39,11 @@ _rng = random.Random(SEED)
 
 # ── Configuration ────────────────────────────────────────────────────────
 N_TOTAL = int(os.environ.get("N_TOTAL", "1000"))
-MAX_ITERS = 10000
+# Per-puzzle node-expansion budget. A puzzle that exceeds it yields no path
+# and therefore contributes NO training signal, so the cap silently trims the
+# hard tail of the dataset out of the learner's diet. Set it high to keep that
+# tail in.
+MAX_ITERS = int(os.environ.get("MAX_ITERS", "10000"))
 MODEL_CHANNELS = int(os.environ.get("MODEL_CHANNELS", "32"))
 # Heuristic architecture: "smallcnn" (conv tower + global avg-pool) or
 # "smallcnn_attn" (adds one positional self-attention block between the

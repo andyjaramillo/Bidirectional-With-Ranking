@@ -501,10 +501,18 @@ class BidirectionalF2FSearch:
     def search(self, max_iterations: int = 10000) -> Optional[List[str]]:
         """Execute TTBS bidirectional search, returning the reconstructed
         path (start → goal) at the first frontier intersection, or None if
-        the budget is exhausted without meeting.
+        the search graph is exhausted (no meeting exists) or the iteration
+        budget runs out first.
         """
         self.init_search()
         for _ in range(max_iterations):
+            # Both frontiers exhausted ⇒ the reachable search graph is fully
+            # explored and no full-state meeting exists. Expansion only ever
+            # adds to the open lists, so once both are empty no later step can
+            # change the outcome — stop now instead of spinning out the rest
+            # of the (possibly huge) budget on no-op steps.
+            if not self.open_f and not self.open_b:
+                break
             found, path = self.step()
             if found:
                 return path
