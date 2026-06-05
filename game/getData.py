@@ -4,6 +4,7 @@ import numpy as np
 # Repo-root /data directory, resolved relative to this file so data loads
 # regardless of the current working directory.
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+DATA_DIR = _DATA_DIR  # public alias
 
 
 def get_data(useDummyData=False):
@@ -49,6 +50,35 @@ def get_data(useDummyData=False):
 
     return all_states
     f.close()
+
+
+def get_solvable_data(limit=None):
+    """Load the solvable-only benchmark produced by
+    ``analysis/build_solvable_benchmark.py`` (instances the bidirectional
+    search can actually meet on; the player-goal-pinned unsolvable artifacts
+    are excluded). Same return type as ``get_data`` — a list of 10x10 arrays.
+
+    Args:
+        limit (int|None): keep only the first ``limit`` boards.
+
+    Returns:
+        list[np.ndarray]: solvable 10x10 boards.
+    """
+    path = os.path.join(_DATA_DIR, "solvable10_3box.txt")
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"{path} not found. Build it first:\n"
+            f"    PYTHONPATH=. python analysis/build_solvable_benchmark.py")
+    boards = []
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            boards.append(np.reshape(np.asarray([int(x) for x in line.split()]), (10, 10)))
+            if limit is not None and len(boards) >= limit:
+                break
+    return boards
 
 
 def get_paths():

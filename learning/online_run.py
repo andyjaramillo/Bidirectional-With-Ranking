@@ -17,7 +17,7 @@ Key env knobs (all optional):
   N_TOTAL, MODEL_CHANNELS, BATCH_SIZE, UPDATES_PER_SOLVE, WARMUP, BUFFER_CAP,
   LOSS={mse,rank,both}, REG_LOSS={mae,mse}, RANK_MARGIN, USE_G={yes,no},
   TRAIN_DEVICE={cpu,mps}, K_REMINE, REMINE_RANDOM_FRAC,
-  MEETING={full,box}, COLLECT_OFF_PATH={yes,no}, OFF_PATH_PER_PUZZLE
+  COLLECT_OFF_PATH={yes,no}, OFF_PATH_PER_PUZZLE
 """
 import os
 import random
@@ -27,8 +27,8 @@ from collections import deque
 import numpy as np
 import torch
 
-from game.getData import get_data
-from learning.nn import SmallCNN
+from game.getData import get_solvable_data
+from learning.nn import build_model
 from search.AI_Bidirectional import BidirectionalF2FSearch
 from learning.replay_buffer import ReplayBuffer
 
@@ -39,16 +39,20 @@ _rng = random.Random(SEED)
 
 # ── Configuration ────────────────────────────────────────────────────────
 N_TOTAL = int(os.environ.get("N_TOTAL", "1000"))
-MAX_ITERS = 10000
+# Per-puzzle node-expansion budget. A puzzle that exceeds it yields no path
+# and therefore contributes NO training signal, so the cap silently trims the
+# hard tail of the dataset out of the learner's diet. Set it high to keep that
+# tail in.
+MAX_ITERS = int(os.environ.get("MAX_ITERS", "10000"))
 MODEL_CHANNELS = int(os.environ.get("MODEL_CHANNELS", "32"))
+# Heuristic architecture: "smallcnn" (conv tower + global avg-pool) or
+# "smallcnn_attn" (adds one positional self-attention block between the
+# conv tower and the MLP head — global receptive field in a single layer).
+MODEL = os.environ.get("MODEL", "smallcnn").lower()
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "64"))
 UPDATES_PER_SOLVE = int(os.environ.get("UPDATES_PER_SOLVE", "8"))
 WARMUP = int(os.environ.get("WARMUP", "200"))
 
-# Frontier-meeting criterion: "full" (agent + boxes; reconstructed plan is a
-# valid step-by-step path → correct distance labels) or "box" (legacy box-only;
-# meets sooner but teleports the agent at the seam → corrupt labels).
-MEETING = os.environ.get("MEETING", "full").lower()
 # Harvest off-path closed states as extra (state, goal, dist-to-goal) samples,
 # labeled by a weight-1 graph search from the goal over the union of forward +
 # flipped-backward transitions (valid because full-state meeting shares nodes).
@@ -78,7 +82,6 @@ REMINE_RANDOM_FRAC = float(os.environ.get("REMINE_RANDOM_FRAC", "0.1"))
 def run_search(puzzle, nn_model=None):
     s = BidirectionalF2FSearch(puzzle, nn_model)
     s.use_g_in_f = USE_G
-    s.full_state_meeting = (MEETING == "full")
     t0 = time.time()
     path = s.search(max_iterations=MAX_ITERS)
     return path, s, time.time() - t0
@@ -200,8 +203,11 @@ def rolling_mean(xs, w):
 
 
 # ── Load puzzles ───────────────────────────────────────────────────────────
-puzzles = get_data(False)[:N_TOTAL]
-print(f"Using {N_TOTAL} puzzles from the dataset.")
+# Solvable-only benchmark (data/solvable10_3box.txt): the player-goal-pinned
+# unmeetable artifacts are filtered out, so every puzzle here contributes a
+# real training signal. Built by analysis/build_solvable_benchmark.py.
+puzzles = get_solvable_data(limit=N_TOTAL)
+print(f"Using {len(puzzles)} solvable puzzles from the filtered dataset.")
 
 
 # ── Phase A: baseline (no NN) ──────────────────────────────────────────────
@@ -221,18 +227,18 @@ print(f"\n[Online] batch={BATCH_SIZE} K={UPDATES_PER_SOLVE} warmup={WARMUP} "
       f"buffer={BUFFER_CAP} loss={LOSS} reg_loss={REG_LOSS} use_g={USE_G} "
       f"train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
 torch.manual_seed(SEED + 100)
-train_model = SmallCNN(MODEL_CHANNELS)
+train_model = build_model(MODEL, MODEL_CHANNELS)
 if TRAIN_DEVICE != "cpu":
     train_model = train_model.to(TRAIN_DEVICE)
 criterion, optimizer = train_model.initialize_cr_opt(loss_type=REG_LOSS)
 torch.manual_seed(SEED)
-print(f"  params={sum(p.numel() for p in train_model.parameters()):,}")
+print(f"  model={MODEL}  params={sum(p.numel() for p in train_model.parameters()):,}")
 
 # Search runs on a CPU twin (same object if training is already CPU).
 if TRAIN_DEVICE == "cpu":
     search_model = train_model
 else:
-    search_model = SmallCNN(MODEL_CHANNELS)
+    search_model = build_model(MODEL, MODEL_CHANNELS)
 
 
 def sync_search_model():
@@ -361,7 +367,7 @@ t_online_total = time.time() - t_online0
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 print(f"\n[Done] online wall time: {t_online_total:.1f}s  "
-      f"updates={total_updates}  remined={remine_count}  meeting={MEETING}")
+      f"updates={total_updates}  remined={remine_count}")
 if COLLECT_OFF_PATH and offpath_added:
     oa = np.array(offpath_added)
     print(f"  off-path harvest: {oa.sum()} samples total "

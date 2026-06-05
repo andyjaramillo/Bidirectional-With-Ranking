@@ -488,6 +488,80 @@ class SmallCNN(nn.Module):
         return crit, optim.Adam(self.parameters(), lr=lr)
 
 
+class SmallCNNAttn(SmallCNN):
+    """SmallCNN with one spatial self-attention block between the conv tower
+    and the MLP head.
+
+    The conv stack produces a (N, C, 10, 10) feature map; we treat the 100
+    cells as tokens (each a C-dim channel vector), add a 2D positional
+    encoding so the layer knows *where* each cell is, and run one Transformer
+    encoder block (multi-head self-attention + FFN, pre-norm + residual).
+    This gives every cell a GLOBAL receptive field in a single layer — a box
+    cell can attend to a distant target cell — which the 7x7-RF conv stack
+    plus global-average-pool cannot do. Tokens are mean-pooled into the head.
+
+    pe="sincos" (default): parameter-free 2D sinusoidal encoding (separate H
+    and W components — respects the grid). pe="learned": a learned per-cell
+    embedding (one vector per grid position).
+
+    Reuses SmallCNN's _prep/forward/forward_batch unchanged; only the core
+    stack (_conv_stack) is overridden, so both the search and training paths
+    route through attention automatically.
+    """
+
+    def __init__(self, channels=32, heads=4, ff_mult=2, pe="sincos"):
+        super().__init__(channels)
+        if channels % heads != 0:
+            raise ValueError(f"channels ({channels}) must be divisible by heads ({heads})")
+        self.H = self.W = 10
+        n_tok = self.H * self.W
+        self.norm1 = nn.LayerNorm(channels)
+        self.attn = nn.MultiheadAttention(channels, heads, batch_first=True)
+        self.norm2 = nn.LayerNorm(channels)
+        self.ff = nn.Sequential(
+            nn.Linear(channels, channels * ff_mult),
+            nn.ReLU(),
+            nn.Linear(channels * ff_mult, channels),
+        )
+        self.pe_mode = pe
+        if pe == "learned":
+            self.pos = nn.Parameter(torch.zeros(1, n_tok, channels))
+            nn.init.trunc_normal_(self.pos, std=0.02)
+        elif pe == "sincos":
+            # (1, C, H, W) sinusoidal -> (1, H*W, C) token-major, as a buffer.
+            pe_t = get_positional_encoding(self.H, self.W, channels)
+            self.register_buffer("pos", pe_t.flatten(2).permute(0, 2, 1).contiguous())
+        else:
+            raise ValueError(f"unknown pe mode: {pe!r}")
+
+    def _conv_stack(self, x):
+        # Conv tower (same as SmallCNN, but stop before pooling).
+        x = F.relu(F.conv2d(x, self.conv1.weight, self.conv1.bias, padding=1))
+        x = F.relu(F.conv2d(x, self.conv2.weight, self.conv2.bias, padding=1))
+        x = F.relu(F.conv2d(x, self.conv3.weight, self.conv3.bias, padding=1))
+        N, C, H, W = x.shape                       # (N, C, 10, 10)
+        tok = x.flatten(2).permute(0, 2, 1)        # (N, HW, C) tokens
+        tok = tok + self.pos                       # 2D positional encoding
+        # Pre-norm Transformer encoder block.
+        a = self.norm1(tok)
+        a, _ = self.attn(a, a, a, need_weights=False)
+        tok = tok + a
+        tok = tok + self.ff(self.norm2(tok))
+        pooled = tok.mean(dim=1)                    # (N, C) token mean-pool
+        h = F.relu(F.linear(pooled, self.fc1.weight, self.fc1.bias))
+        return F.linear(h, self.fc2.weight, self.fc2.bias)
+
+
+def build_model(name="smallcnn", channels=32, **kw):
+    """Factory used by online_run to select a heuristic model by name."""
+    name = name.lower()
+    if name in ("smallcnn", "cnn", "small"):
+        return SmallCNN(channels)
+    if name in ("smallcnn_attn", "attn", "cnn_attn"):
+        return SmallCNNAttn(channels, **kw)
+    raise ValueError(f"unknown model: {name!r}")
+
+
 _LightningBase = L.LightningModule if _LIGHTNING_AVAILABLE else object
 
 
