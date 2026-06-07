@@ -559,6 +559,7 @@ class NNModel(nn.Module):
 
 class Loss(nn.Module):
     def __init__(self, type_):
+        super().__init__()
         self.type_ = type_
         if type_ == "mse":
             self.mse_forward_fn = nn.MSELoss()
