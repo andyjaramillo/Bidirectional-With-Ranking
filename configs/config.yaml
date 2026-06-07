@@ -2,4 +2,6 @@ epochs: 10
 learning_rate: 0.001
 algo: ttbs
 batch_size: 1
-path_file: data/paths10_3box.txt
+path_file: data/solveable_paths10_3box.txt
+model_size: tiny
+loss_fn: both

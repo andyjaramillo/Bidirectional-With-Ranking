@@ -348,16 +348,7 @@ class NN(nn.Module):
         op2 = self.op2(d2) # Output 2 (1 output, no final activation in original Keras)
 
         return op2
-    def initialize_cr_opt(self, config):
-        """
-        Initialize loss criterion and optimizer.
-        
-        Returns:
-            tuple: (criterion, optimizer)
-        """
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(self.parameters(), lr=config.learning_rate)
-        return criterion, optimizer
+
     def to_categorical(self, y, num_classes):
         """ 1-hot encodes a tensor """
         return np.eye(num_classes, dtype='uint8')[y]
@@ -423,51 +414,6 @@ class NN(nn.Module):
         return categorical_state.reshape(1,10,10,5), categorical_goal_state.reshape(1,10,10,5)
 
 
-
-class NNLightning(L.LightningModule):
-    """
-    PyTorch Lightning wrapper for the NN model.
-    """
-    def __init__(self, dim):
-        super().__init__()
-        self.model = NN(dim)
-        self.criterion, self.optimizer = self.model.initialize_cr_opt()
-        log_dir = "./loss_logs"
-        file_count = len([f for f in os.listdir(log_dir) if os.path.isfile(os.path.join(log_dir, f))])
-        new_file_num = file_count + 1
-        filename = f"{new_file_num}.txt"
-        filepath = os.path.join(log_dir, filename)
-        headers = ['epoch', 'step', 'nn_cost', 'optimal_cost', 'loss']
-        self.f = open(filepath, mode='w', newline='')
-        self.writer = csv.writer(self.f)
-        self.writer.writerow(headers)
-
-
-    def forward(self, inputA, box_tar,inputB):
-        return self.model(inputA, box_tar,inputB)
-
-    def training_step(self, batch, batch_idx):
-        state, path = batch
-        
-        # output = self(inputA, box_tar,inputB)
-        # loss = self.criterion(output.squeeze(), target.float())
-        # self.log('train_loss', loss)
-        # self.writer.writerow([self.current_epoch, loss.item()])
-        # return loss
-
-    def validation_step(self, batch, batch_idx):
-        inputA, box_tar,inputB, target = batch
-        output = self(inputA, box_tar,inputB)
-        loss = self.criterion(output.squeeze(), target.float())
-        self.log('val_loss', loss)
-        return loss
-    def configure_optimizers(self):
-        return self.optimizer
-    
-    def on_fit_end(self, trainer, pl_module):
-        self.f.close()
-
-
 class SmallerCNN(nn.Module):
 
     def __init__(self,dim):
@@ -485,16 +431,8 @@ class SmallerCNN(nn.Module):
             nn.Conv2d(74, 64, kernel_size=3, padding=1) for _ in range(3)
         ])
 
-    def initialize_cr_opt(self, config):
-        """
-        Initialize loss criterion and optimizer.
-        
-        Returns:
-            tuple: (criterion, optimizer)
-        """
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(self.parameters(), lr=config.learning_rate)
-        return criterion, optimizer
+
+   
 
     def to_categorical(self, y, num_classes):
         """ 1-hot encodes a tensor """
@@ -583,10 +521,74 @@ class SmallerCNN(nn.Module):
             y4d[pos[i][0]][pos[i][1]][2] = 1
         return y4d
 
-        
+MODEL_MAP={
+    "tiny": SmallerCNN,
+    "base": NN
+}
 
         
+class NNModel(nn.Module):
+    """
+    PyTorch Lightning wrapper for the NN model.
+    """
+    def __init__(self, dim, config):
+        super().__init__()
+        
+        self.model = MODEL_MAP[config.model_size](dim)
+        self.criterion, self.optimizer = self.initialize_cr_opt(config=config)
+        log_dir = "./loss_logs"
+        file_count = len([f for f in os.listdir(log_dir) if os.path.isfile(os.path.join(log_dir, f))])
+        new_file_num = file_count + 1
+        filename = f"{new_file_num}.txt"
+        filepath = os.path.join(log_dir, filename)
+        headers = ['epoch', 'step', 'nn_cost', 'optimal_cost', 'loss']
+        self.f = open(filepath, mode='w', newline='')
+        self.writer = csv.writer(self.f)
+        self.writer.writerow(headers)
+
+    def initialize_cr_opt(self, config):
+        ## Three loss functions supported: MSE loss, rank, or both
+        criterion = Loss(config.loss_fn)
+        optimizer = optim.Adam(self.parameters(), lr=config.learning_rate)
+        return criterion, optimizer
 
 
+    def forward(self, inputA, box_tar,inputB):
+        return self.model(inputA, box_tar,inputB)
 
 
+class Loss(nn.Module):
+    def __init__(self, type_):
+        self.type_ = type_
+        if type_ == "mse":
+            self.mse_forward_fn = nn.MSELoss()
+        if type_ == "rank":
+            self.rank_forward_fn = RankLoss()
+        if type_ == "both":
+            self.mse_forward_fn = nn.MSELoss()
+            self.rank_forward_fn = RankLoss()
+        if type_ == "rank" or type_ == "both":
+            self.alpha = nn.Parameter()
+            self.beta = nn.Parameter()
+        
+        
+    
+    def forward(self, input_, target_):
+        if self.type_ == "mse":
+            return self.mse_forward_fn(input_, target_)
+        if self.type_ == "rank":
+            return self.rank_forward_fn(input_, target_, self.alpha, self.beta)
+        if self.type_ == "both":
+            return self.mse_forward_fn(input_, target_) + self.rank_forward_fn(input_, target_, self.alpha, self.beta)
+class RankLoss(nn.Module):
+    
+
+    def forward(self, input_, target, alpha,beta):
+        cost_diff_matrix = input_[:, torch.new_axis] - input_
+        heuristic_diff_matric = target[:, torch.new_axis] - target
+        unique_costs = cost_diff_matrix[torch.triu_indices(len(input_), k=1)]
+        unique_heuristics = heuristic_diff_matric[torch.triu_indices(len(target), k=1)]
+        unique_cost_alphas = alpha * unique_costs
+        unique_heuristic_betas = beta * unique_heuristics
+
+        return sum(unique_cost_alphas + unique_heuristic_betas)

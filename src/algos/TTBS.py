@@ -242,7 +242,7 @@ class TTBS(Algo):
             bkey_map_self= self.bkey_to_hash_f
             bkey_map_opp = self.bkey_to_hash_b
             last_tgt     = self.last_target_f
-            game         = self.forward_game
+            game         = self.game
             opp_game     = self.backward_game
             opp_g_map    = self.g_b
             cur_anch     = 'anchor_f'
@@ -262,7 +262,7 @@ class TTBS(Algo):
             bkey_map_opp = self.bkey_to_hash_f
             last_tgt     = self.last_target_b
             game         = self.backward_game
-            opp_game     = self.forward_game
+            opp_game     = self.game
             opp_g_map    = self.g_f
             cur_anch     = 'anchor_b'
             opp_anch     = 'anchor_f'

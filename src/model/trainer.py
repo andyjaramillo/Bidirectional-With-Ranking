@@ -5,7 +5,7 @@ import tqdm
 from tqdm import tqdm
 from omegaconf import OmegaConf
 from src.algos import ALGO_REGISTRY
-from src.model.nn import NN, SmallerCNN
+from src.model.nn import NN, SmallerCNN, NNModel
 from src.utils.getData import get_data, decode_path
 from src.model.replay_buffer import ReplayBuffer
 
@@ -24,9 +24,10 @@ class Trainer:
         self.states = self.states[:len(self.states) - len(self.test_)]
         generator1 = torch.Generator().manual_seed(42)
         self.train_, self.val = random_split(self.dataset, [0.8, 0.2], generator=generator1)
-        self.model = SmallerCNN(10)
+        self.model = NNModel(10, config)
         self.epochs = config.epochs
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        print("DEVICE is", self.device)
         self.criterion, self.optimizer = self.model.initialize_cr_opt(config)
         self.search = self.Algo(self.states[0], nn=self.model)
         self.buffer = ReplayBuffer()

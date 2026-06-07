@@ -38,7 +38,7 @@ def get_data(useDummyData=False, max_subset=-1):
     if useDummyData:
         f=open("test_box.txt", "r")
     else:
-        f=open("data/states10_3box.txt", "r")
+        f=open("data/solvable10_3box.txt", "r")
 
     array_s=[]
     array_a=[]
