@@ -569,8 +569,8 @@ class Loss(nn.Module):
             self.mse_forward_fn = nn.MSELoss()
             self.rank_forward_fn = RankLoss()
         if type_ == "rank" or type_ == "both":
-            self.alpha = nn.Parameter()
-            self.beta = nn.Parameter()
+            self.alpha = nn.Parameter(torch.tensor(1.0))
+            self.beta = nn.Parameter(torch.tensor(0.0))
         
         
     
@@ -580,16 +580,16 @@ class Loss(nn.Module):
         if self.type_ == "rank":
             return self.rank_forward_fn(input_, target_, self.alpha, self.beta)
         if self.type_ == "both":
-            return self.mse_forward_fn(input_, target_) + self.rank_forward_fn(input_, target_, self.alpha, self.beta)
+            return 0.5 * self.mse_forward_fn(input_, target_) + 0.5* self.rank_forward_fn(input_, target_, self.alpha, self.beta)
 class RankLoss(nn.Module):
     
 
     def forward(self, input_, target, alpha,beta):
-        cost_diff_matrix = input_[:, torch.new_axis] - input_
-        heuristic_diff_matric = target[:, torch.new_axis] - target
-        unique_costs = cost_diff_matrix[torch.triu_indices(len(input_), k=1)]
-        unique_heuristics = heuristic_diff_matric[torch.triu_indices(len(target), k=1)]
+ 
+        cost_diff_matrix = input_[:, None] - input_[None,: ]
+        heuristic_diff_matric = target[:, None] - target[None,: ]
+        unique_costs = torch.triu(cost_diff_matrix)
+        unique_heuristics = torch.triu(heuristic_diff_matric)
         unique_cost_alphas = alpha * unique_costs
         unique_heuristic_betas = beta * unique_heuristics
-
-        return sum(unique_cost_alphas + unique_heuristic_betas)
+        return sum(torch.flatten(unique_cost_alphas + unique_heuristic_betas))

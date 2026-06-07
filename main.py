@@ -39,6 +39,7 @@ def parse_arguments():
 
 
 if __name__ == "__main__":
+    torch.manual_seed(42)
     args = parse_arguments()
     config = OmegaConf.load(args.config)
     trainer = Trainer(config) 
