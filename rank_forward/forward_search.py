@@ -167,13 +167,24 @@ def manhattan_heuristic(game: SokobanGame) -> Heuristic:
     return h
 
 
-def model_heuristic(model, target, goal_ctx) -> Heuristic:
-    """Wrap a trained heuristic net as a batched, non-negative h(boards)."""
+def model_heuristic(model, target, goal_ctx, clamp_nonneg: bool = False) -> Heuristic:
+    """Wrap a trained heuristic net as a batched h(boards).
+
+    Output is the RAW net value (paper-faithful: the reference net has a linear
+    output head, no activation). The ranking loss does not constrain the sign or
+    scale of h, so clamping to >=0 (as our bidirectional searcher does) would
+    erase ranking information — when training drives h negative, the clamp turns
+    f=g+h into pure g and the search silently degenerates to the blind baseline.
+    Set ``clamp_nonneg=True`` only if you specifically want the bidirectional
+    convention.
+    """
     import torch
 
     def h(boards: List[np.ndarray]) -> List[float]:
         n = len(boards)
         with torch.no_grad():
             out = model.forward_batch(boards, [target] * n, [goal_ctx] * n)
-            return out.clamp_min(0.0).tolist()
+            if clamp_nonneg:
+                out = out.clamp_min(0.0)
+            return out.tolist()
     return h
