@@ -15,13 +15,14 @@ from typing import List, Optional
 import numpy as np
 
 from game.SokobanGame import SokobanGame
-from .forward_search import ForwardSearch, model_heuristic
-from .ranking_net import build_forward_model
-from . import config as C
+from rank_forward.forward_search import ForwardSearch, model_heuristic
+from rank_forward.ranking_net import build_forward_model
+from rank_forward import config as C
 
 
 def evaluate(model: Optional[object], boards: List[np.ndarray], alg: str = "astar",
-             max_iters: int = 10000, use_deadlock: bool = False) -> dict:
+             max_iters: int = 10000, use_deadlock: bool = False,
+             full_goal: bool = False) -> dict:
     """Run forward search over ``boards``. ``model=None`` is the blind (h=0)
     baseline. Returns per-puzzle expansion counts, solved flags, and summaries.
     For solved puzzles the recorded count is ``first_solved_iter`` (expansions
@@ -38,7 +39,7 @@ def evaluate(model: Optional[object], boards: List[np.ndarray], alg: str = "asta
             game = SokobanGame(b)
             heur = model_heuristic(model, game.target, game.goal_map)
         s = ForwardSearch(b, heuristic=heur, use_g_in_f=use_g,
-                          use_deadlock=use_deadlock)
+                          use_deadlock=use_deadlock, full_goal=full_goal)
         path = s.search(max_iterations=max_iters)
         if path is not None:
             iters.append(s.first_solved_iter)
@@ -81,17 +82,18 @@ def main():
           f"MAX_ITERS={C.MAX_ITERS} USE_DEADLOCK={C.USE_DEADLOCK} "
           f"REDUCTION={C.REDUCTION} LOCAL_PAIRS={C.LOCAL_PAIRS}")
 
-    from .dataset import load_split, build_train_instances, cache_key
-    from .trainer import train
+    from rank_forward.dataset import load_split, build_train_instances, cache_key
+    from rank_forward.trainer import train
 
     train_boards, eval_boards = load_split(C.N_TOTAL, C.N_EVAL)
     print(f"\n[data] train={len(train_boards)} eval={len(eval_boards)}")
 
     print("[data] building/loading optimal training trajectories …")
-    ck = cache_key(C.CACHE_DIR, C.N_TOTAL, C.N_EVAL, C.SOLVE_CAP, C.USE_DEADLOCK)
+    ck = cache_key(C.CACHE_DIR, C.N_TOTAL, C.N_EVAL, C.SOLVE_CAP, C.USE_DEADLOCK,
+                   C.FULL_GOAL)
     t0 = time.time()
     instances = build_train_instances(train_boards, C.SOLVE_CAP, C.USE_DEADLOCK,
-                                      cache_path=ck)
+                                      cache_path=ck, full_goal=C.FULL_GOAL)
     print(f"[data] {len(instances)} solved instances ready "
           f"({time.time()-t0:.0f}s), cache={ck}")
 
@@ -111,14 +113,14 @@ def main():
     # ── Evaluation: blind baseline + learned heuristic in A* and GBFS ──────
     print("\n[eval] blind baseline (forward A*, h=0) …")
     blind = evaluate(None, eval_boards, alg="astar", max_iters=C.MAX_ITERS,
-                     use_deadlock=C.USE_DEADLOCK)
+                     use_deadlock=C.USE_DEADLOCK, full_goal=C.FULL_GOAL)
     _report("blind A*", blind)
 
     results = {}
     for alg in ("astar", "gbfs"):
         print(f"\n[eval] learned heuristic ({C.LOSS}) in forward {alg} …")
         r = evaluate(model, eval_boards, alg=alg, max_iters=C.MAX_ITERS,
-                     use_deadlock=C.USE_DEADLOCK)
+                     use_deadlock=C.USE_DEADLOCK, full_goal=C.FULL_GOAL)
         results[alg] = r
         _report(f"{alg} / {C.LOSS}", r)
         xm, xmd, ncommon = _speedup(blind, r)

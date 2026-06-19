@@ -30,6 +30,10 @@ SEED = _int("SEED", 0)
 ALG = _str("ALG", "astar").lower()      # astar | gbfs   (eval search)
 MAX_ITERS = _int("MAX_ITERS", 10000)    # expansion budget, same default as online_run
 USE_DEADLOCK = _bool("USE_DEADLOCK", False)  # match bidirectional forward side if True
+# Require the player to reach its pinned goal cell ([7][5]) too, matching the
+# bidirectional method's full-state goal (apples-to-apples). False = classical
+# Sokoban goal (boxes on targets, player anywhere).
+FULL_GOAL = _bool("FULL_GOAL", False)
 SOLVE_CAP = _int("SOLVE_CAP", 200000)   # budget for optimal label generation
 
 # Heuristic net

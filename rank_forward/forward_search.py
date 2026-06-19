@@ -39,7 +39,7 @@ Heuristic = Optional[Callable[[List[np.ndarray]], List[float]]]
 class ForwardSearch:
     def __init__(self, puzzle: np.ndarray, heuristic: Heuristic = None,
                  use_g_in_f: bool = True, use_deadlock: bool = False,
-                 reopen: Optional[bool] = None):
+                 reopen: Optional[bool] = None, full_goal: bool = False):
         """
         Args:
             puzzle: initial 10x10 board (0 wall, 1 floor, 2 target, 3 player, 4 box).
@@ -52,6 +52,13 @@ class ForwardSearch:
                 to match the bidirectional forward side's pruning exactly.
             reopen: reopen closed nodes on a strictly better g. Defaults to
                 use_g_in_f (A* reopens, GBFS does not), per the paper.
+            full_goal: if True, the goal also requires the player to be at the
+                fixed cell our bidirectional method pins (goal_map's player
+                cell, [7][5]) — i.e. reach the EXACT full goal state, not just
+                boxes-on-targets. This makes the forward search solve the
+                identical problem as the bidirectional method (which pins the
+                player), instead of the easier classical goal where the player
+                may end anywhere. Default False = classical Sokoban goal.
         """
         self.game = SokobanGame(puzzle)
         self.start = np.asarray(puzzle)
@@ -64,6 +71,10 @@ class ForwardSearch:
         # cell) so the convention is identical in training and search.
         self.goal_ctx = self.game.goal_map
         self.target = self.game.target
+        self.full_goal = full_goal
+        # The player's pinned goal cell = where the player sits in goal_map.
+        pr, pc = np.where(self.goal_ctx == 3)
+        self.goal_player = (int(pr[0]), int(pc[0])) if len(pr) else None
 
         self.open: List[Tuple] = []
         self.g = {}
@@ -72,6 +83,13 @@ class ForwardSearch:
         self.iteration = 0
         self.first_solved_iter: Optional[int] = None
         self._tie = 0
+
+    def _is_goal(self, board: np.ndarray) -> bool:
+        if not self.game.isGoal(board):
+            return False
+        if not self.full_goal:
+            return True
+        return self.game.getPlayerLocation(board) == self.goal_player
 
     # ── heuristic plumbing ────────────────────────────────────────────────
     def _h_batch(self, boards: List[np.ndarray]) -> List[float]:
@@ -103,7 +121,7 @@ class ForwardSearch:
                 continue                       # superseded entry — not counted
 
             board = game.decodeMap(key)
-            if game.isGoal(board):
+            if self._is_goal(board):
                 self.first_solved_iter = self.iteration
                 return self._reconstruct(key)
 

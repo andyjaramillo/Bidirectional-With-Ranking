@@ -23,7 +23,7 @@ from typing import List, Optional
 import numpy as np
 
 from game.SokobanGame import SokobanGame
-from .forward_search import ForwardSearch, manhattan_heuristic
+from rank_forward.forward_search import ForwardSearch, manhattan_heuristic
 
 
 class Instance:
@@ -41,25 +41,31 @@ class Instance:
         self.opt_len = self.L
 
 
-def solve_optimal(puzzle: np.ndarray, max_iterations: int = 200000
-                  ) -> Optional[List[np.ndarray]]:
+def solve_optimal(puzzle: np.ndarray, max_iterations: int = 200000,
+                  full_goal: bool = False) -> Optional[List[np.ndarray]]:
     """Return a provably shortest path (list of boards) or None.
 
-    A* with the admissible MWPM-Manhattan heuristic and reopening is optimal.
-    Deadlock pruning is intentionally OFF here: SokobanGame.hasDeadlock does
-    not exempt boxes already on targets, so it could prune the goal.
+    A* with the admissible MWPM-Manhattan heuristic and reopening is optimal
+    (the box-Manhattan bound stays admissible even for the full goal, which
+    also routes the player to its pinned cell). Deadlock pruning is
+    intentionally OFF here: SokobanGame.hasDeadlock does not exempt boxes
+    already on targets, so it could prune the goal.
     """
     game = SokobanGame(puzzle)
     s = ForwardSearch(puzzle, heuristic=manhattan_heuristic(game),
-                      use_g_in_f=True, use_deadlock=False, reopen=True)
+                      use_g_in_f=True, use_deadlock=False, reopen=True,
+                      full_goal=full_goal)
     return s.search(max_iterations=max_iterations)
 
 
 def build_instance(puzzle: np.ndarray, max_iterations: int = 200000,
-                   use_deadlock: bool = False) -> Optional[Instance]:
+                   use_deadlock: bool = False, full_goal: bool = False
+                   ) -> Optional[Instance]:
     """Solve ``puzzle`` optimally and assemble its training Instance, or None
-    if it cannot be solved within ``max_iterations``."""
-    path = solve_optimal(puzzle, max_iterations=max_iterations)
+    if it cannot be solved within ``max_iterations``. ``full_goal`` makes the
+    optimal path target the player-pinned full goal (matching the bidirectional
+    method) rather than the classical boxes-on-targets goal."""
+    path = solve_optimal(puzzle, max_iterations=max_iterations, full_goal=full_goal)
     if path is None or len(path) < 2:
         return None
 
