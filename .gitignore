@@ -6,3 +6,6 @@ search_results.csv
 anchor_results.csv
 loss_logs/
 *.pkl
+*.pt
+rank_forward/ckpt/
+rank_forward/cache/
