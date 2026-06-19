@@ -10,8 +10,8 @@ from typing import List, Optional
 import numpy as np
 import torch
 
-from .losses import instance_loss
-from .trajectory import Instance
+from rank_forward.losses import instance_loss
+from rank_forward.trajectory import Instance
 
 
 def train(instances: List[Instance], model, loss_name: str, *,
@@ -66,7 +66,7 @@ def train(instances: List[Instance], model, loss_name: str, *,
 
 
 def _periodic_eval(model, eval_boards, alg, max_iters, subset, step):
-    from .forward_run import evaluate          # lazy import (avoids cycle)
+    from rank_forward.forward_run import evaluate   # lazy import (avoids cycle)
     model.eval()
     sub = eval_boards[:subset]
     res = evaluate(model, sub, alg=alg, max_iters=max_iters)
