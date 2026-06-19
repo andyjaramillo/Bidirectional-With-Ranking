@@ -66,13 +66,23 @@ class ForwardSearch:
         self.use_g_in_f = use_g_in_f
         self.use_deadlock = use_deadlock
         self.reopen = use_g_in_f if reopen is None else reopen
-        # Fixed goal context fed as the net's second ("other") input. We reuse
-        # the repo's canonical goal_map (boxes on targets, player at a fixed
-        # cell) so the convention is identical in training and search.
-        self.goal_ctx = self.game.goal_map
         self.target = self.game.target
         self.full_goal = full_goal
-        # The player's pinned goal cell = where the player sits in goal_map.
+        # Goal context fed as the net's second ("other") input.
+        #  - full_goal: the EXACT goal the bidirectional method targets — boxes
+        #    on targets AND the player back at its START cell. That is the
+        #    backward search's seed (initializeBackwardPuzzle keeps the player
+        #    at the start), flipped into the forward frame. NOTE: goal_map's
+        #    [7][5] player cell is an unused attribute, NOT the real goal.
+        #  - classical: boxes on targets, player anywhere; goal_map is just a
+        #    fixed reference context for the heuristic.
+        if full_goal:
+            self.goal_ctx = self.game.flipGame(
+                self.game.initializeBackwardPuzzle(self.start))
+        else:
+            self.goal_ctx = self.game.goal_map
+        # The player's required goal cell = where the player sits in goal_ctx
+        # (start cell when full_goal; only consulted when full_goal is True).
         pr, pc = np.where(self.goal_ctx == 3)
         self.goal_player = (int(pr[0]), int(pc[0])) if len(pr) else None
 

@@ -98,5 +98,9 @@ def build_instance(puzzle: np.ndarray, max_iterations: int = 200000,
                 flat_parent.append(i)
         node_off.append(offs)
 
+    # Heuristic goal context must match the search's goal: the player@start
+    # full goal when full_goal, else the classical goal_map reference.
+    goal_ctx = (game.flipGame(game.initializeBackwardPuzzle(puzzle))
+                if full_goal else game.goal_map)
     return Instance(path, flat_states, flat_parent, node_off,
-                    game.target, game.goal_map)
+                    game.target, goal_ctx)

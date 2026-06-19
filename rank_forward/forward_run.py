@@ -33,13 +33,12 @@ def evaluate(model: Optional[object], boards: List[np.ndarray], alg: str = "asta
     plan_len: List[Optional[int]] = []
     t0 = time.time()
     for b in boards:
-        if model is None:
-            heur = None
-        else:
-            game = SokobanGame(b)
-            heur = model_heuristic(model, game.target, game.goal_map)
-        s = ForwardSearch(b, heuristic=heur, use_g_in_f=use_g,
+        # Build the searcher first so its goal_ctx (the real goal — player@start
+        # when full_goal) is known, then point the heuristic at that SAME goal.
+        s = ForwardSearch(b, heuristic=None, use_g_in_f=use_g,
                           use_deadlock=use_deadlock, full_goal=full_goal)
+        if model is not None:
+            s.heuristic = model_heuristic(model, s.target, s.goal_ctx)
         path = s.search(max_iterations=max_iters)
         if path is not None:
             iters.append(s.first_solved_iter)
