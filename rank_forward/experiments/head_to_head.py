@@ -106,13 +106,14 @@ def eval_bd(nn):
         s = BidirectionalF2FSearch(p, nn)
         s.use_g_in_f = True
         path = s.search(max_iterations=MAX_ITERS)
-        if path is not None:
-            iters.append(s.first_meeting_iter if s.first_meeting_iter is not None
-                         else s.iteration)
-            solved.append(True)
-        else:
-            iters.append(s.iteration)
-            solved.append(False)
+        # Expansion count = total nodes whose successors were generated, summed
+        # over BOTH frontiers = len(closed_f)+len(closed_b). This is exactly the
+        # same unit as the forward searcher's len(closed)/first_solved_iter.
+        # NB: we deliberately do NOT use first_meeting_iter — verified to equal
+        # (expansions - 1) because it is read mid-step before the meeting-finding
+        # expansion is counted — so the two methods' counts are exactly consistent.
+        iters.append(len(s.closed_f) + len(s.closed_b))
+        solved.append(path is not None)
     return summ(iters, solved)
 
 

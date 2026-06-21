@@ -64,6 +64,19 @@ heuristic the inconsistent `[7][5]` goal context, whereas the full-goal run feed
 correct player@start goal — so the full-goal heuristic is simply better-specified,
 independent of which goal it is scored against.
 
+**Expanded-node counting is consistent across methods (audited).** The metric is
+"number of nodes whose successors were generated." Verified against an independent
+counter (`availableStates` calls, one per expansion): forward
+`first_solved_iter == len(closed) == #expansions` exactly (the goal is detected on
+pop and never expanded, correctly uncounted); bidirectional true expansions
+`== len(closed_f)+len(closed_b) == self.iteration`, summed over BOTH frontiers (the
+standard uni-vs-bi total). Caveat: `first_meeting_iter` equals (expansions − 1) — it
+is read mid-step before the meeting-finding expansion is counted — so `head_to_head.py`
+uses `len(closed_f)+len(closed_b)` for the bidirectional count to be exactly
+consistent with the forward `len(closed)`. (The earlier reported bidirectional medians
+used `first_meeting_iter`, i.e. were ~1 lower; immaterial vs medians of 86/249, and it
+had slightly favored the bidirectional side.)
+
 **Amount of learning — comparable in budget, asymmetric in supervision.**
 - Forward: 12,000 SGD steps over 1,794 optimal-trajectory instances (~6.7 epochs),
   ~71 states/step → ~0.85M state-gradient evaluations.
