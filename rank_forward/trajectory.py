@@ -58,14 +58,15 @@ def solve_optimal(puzzle: np.ndarray, max_iterations: int = 200000,
     return s.search(max_iterations=max_iterations)
 
 
-def build_instance(puzzle: np.ndarray, max_iterations: int = 200000,
-                   use_deadlock: bool = False, full_goal: bool = False
-                   ) -> Optional[Instance]:
-    """Solve ``puzzle`` optimally and assemble its training Instance, or None
-    if it cannot be solved within ``max_iterations``. ``full_goal`` makes the
-    optimal path target the player-pinned full goal (matching the bidirectional
-    method) rather than the classical boxes-on-targets goal."""
-    path = solve_optimal(puzzle, max_iterations=max_iterations, full_goal=full_goal)
+def instance_from_path(puzzle: np.ndarray, path, use_deadlock: bool = False,
+                       full_goal: bool = False) -> Optional[Instance]:
+    """Assemble a training Instance from a GIVEN solution path (list of boards,
+    start -> goal). Used both by build_instance (optimal path from a separate
+    solver) and by the bootstrap experiment (the satisficing path the forward
+    search found with its own current heuristic). Returns None for a degenerate
+    path. The ranking loss treats ``path`` as the trajectory and the distance-1
+    off-path siblings as negatives — exactly as for an optimal path; if ``path``
+    is suboptimal the supervision is simply noisier (the bootstrap reality)."""
     if path is None or len(path) < 2:
         return None
 
@@ -104,3 +105,16 @@ def build_instance(puzzle: np.ndarray, max_iterations: int = 200000,
                 if full_goal else game.goal_map)
     return Instance(path, flat_states, flat_parent, node_off,
                     game.target, goal_ctx)
+
+
+def build_instance(puzzle: np.ndarray, max_iterations: int = 200000,
+                   use_deadlock: bool = False, full_goal: bool = False
+                   ) -> Optional[Instance]:
+    """Solve ``puzzle`` OPTIMALLY (admissible A*) and assemble its training
+    Instance, or None if it cannot be solved within ``max_iterations``. This is
+    the imitation-from-expert path; the bootstrap experiment instead calls
+    instance_from_path on a self-found (satisficing) path. ``full_goal`` targets
+    the player-pinned full goal (matching the bidirectional method)."""
+    path = solve_optimal(puzzle, max_iterations=max_iterations, full_goal=full_goal)
+    return instance_from_path(puzzle, path, use_deadlock=use_deadlock,
+                              full_goal=full_goal)
