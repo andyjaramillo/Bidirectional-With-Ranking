@@ -73,10 +73,31 @@ independent of which goal it is scored against.
 
 Gradient budget is close (~12k vs ~14k updates; ~0.85M vs ~0.92M sample-gradients),
 same `SmallCNN` (23,585 params), same split, same node-expansion metric. The real
-asymmetry is the **supervision source**: the forward method trains on **optimal**
-(provably shortest) trajectories from a separate admissible-A\* solver (expert
-imitation), while the bidirectional method **bootstraps from its own satisficing**
-F2F solutions. This favors the forward side (better labels, plus an external solver's
-search work that is not counted in its 12k steps). A same-supervision study — train
-the bidirectional on optimal trajectories too, or the forward on bootstrapped paths —
-is the way to remove that asymmetry, and is future work.
+asymmetry is the **supervision source**: the *offline* forward method trains on
+**optimal** trajectories from a separate admissible-A\* solver (expert imitation),
+while the bidirectional method **bootstraps from its own satisficing** F2F solutions.
+
+**Same-supervision result (`forward_bootstrap.py`).** We removed the asymmetry by
+training the forward method in the SAME bootstrap manner — self-supervising on the
+paths its own search finds (13,568 updates, matched to the bidirectional's 14,392).
+On the held-out 200 (full goal, same `SmallCNN`):
+
+| method (matched supervision) | solved | median exp | mean exp |
+|---|---:|---:|---:|
+| forward L\* / A\* — offline OPTIMAL labels | 196/200 | 148 | 957 |
+| forward L\* / A\* — BOOTSTRAP (own paths) | 195/200 | **86** | **546** |
+| bidirectional learned (bootstrap) | **198**/200 | 249 | 607 |
+
+Two findings: (1) for the forward method, **bootstrap (on-policy) beats optimal
+labels (off-policy)** — median 86 vs 148 — because training on the states the
+heuristic's own search visits removes the distribution mismatch of imitating an
+external solver (the optimal-label "advantage" was actually a handicap). (2) With
+supervision matched (both bootstrap), the forward ranking method is **more
+node-efficient** than the bidirectional method (median 86 vs 249, mean 546 vs 607);
+the bidirectional keeps only a small solve-rate edge (198 vs 195/200). So the earlier
+"bidirectional has the lighter tail" conclusion does NOT survive supervision matching.
+
+Caveats: single seed / architecture / split; forward counts forward expansions vs
+bidirectional total (both-frontier) expansions (the standard uni-vs-bi comparison);
+the ~50-puzzle Manhattan warmup is mildly optimal for A\*. Replicate across seeds
+before treating as a strong claim.
