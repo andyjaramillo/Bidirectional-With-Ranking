@@ -33,11 +33,17 @@ N_EVAL = int(os.environ.get("H2H_NEVAL", "200"))
 FWD_STEPS = int(os.environ.get("H2H_FWD_STEPS", "12000"))
 SOLVE_CAP = int(os.environ.get("H2H_SOLVE_CAP", "300000"))
 FULL_GOAL = os.environ.get("H2H_FULL_GOAL", "1").lower() in ("1", "true", "yes", "y", "on")
+# Bidirectional meet-on-generation (default on): the bidirectional method's best
+# config — detects the seam as soon as both frontiers generate the shared state,
+# cutting ~11% of expansions wasted past a valid seam. Applies to BOTH the
+# bidirectional training (via online_run) and its eval here.
+MEET_ON_GEN = os.environ.get("H2H_MEET_ON_GEN", "1").lower() in ("1", "true", "yes", "y", "on")
 
 boards = get_solvable_data(limit=N_TRAIN + N_EVAL)
 eval_boards = boards[N_TRAIN:N_TRAIN + N_EVAL]
 print(f"[H2H] eval on {len(eval_boards)} held-out puzzles "
-      f"(boards[{N_TRAIN}:{N_TRAIN+N_EVAL}]), full_goal={FULL_GOAL}", flush=True)
+      f"(boards[{N_TRAIN}:{N_TRAIN+N_EVAL}]), full_goal={FULL_GOAL} "
+      f"bidir_meet_on_generate={MEET_ON_GEN}", flush=True)
 
 
 def summ(iters, solved):
@@ -93,6 +99,7 @@ for loss in ("lgbfs", "lstar"):
 print(f"\n[H2H] ===== BIDIRECTIONAL side (training on first {N_TRAIN} via online_run) =====",
       flush=True)
 os.environ["N_TOTAL"] = str(N_TRAIN)
+os.environ["MEET_ON_GENERATE"] = "yes" if MEET_ON_GEN else "no"
 import learning.online_run as orun
 from search.AI_Bidirectional import BidirectionalF2FSearch
 
@@ -105,6 +112,7 @@ def eval_bd(nn):
     for p in eval_boards:
         s = BidirectionalF2FSearch(p, nn)
         s.use_g_in_f = True
+        s.meet_on_generate = MEET_ON_GEN
         path = s.search(max_iterations=MAX_ITERS)
         # Expansion count = total nodes whose successors were generated, summed
         # over BOTH frontiers = len(closed_f)+len(closed_b). This is exactly the
