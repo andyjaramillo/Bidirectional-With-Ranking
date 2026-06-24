@@ -100,18 +100,14 @@ class BidirectionalF2FSearch:
         self.fkey_to_hash_f: Dict[str, str] = {}
         self.fkey_to_hash_b: Dict[str, str] = {}
 
-        # ── Meet on GENERATION (default), not on closing ───────────────
-        # The seam is detected as soon as BOTH frontiers have GENERATED the same
-        # full state (it is in both open lists). The alternative — firing only
-        # when a freshly generated successor matches the opposite CLOSED set —
-        # keeps expanding even after a valid generated seam exists (until one
-        # side expands it and the other re-generates it via a neighbor), wasting
-        # ~11% of expansions on average and up to ~60% on some instances
-        # (heuristic-independent). For a satisficing search the generated seam is
-        # equally valid (the shared state has parent chains on both sides), just
-        # possibly a slightly different-length plan. Set False to restore the
-        # legacy closed-set-only detection.
-        self.meet_on_generate: bool = True
+        # ── Optional: meet on GENERATION instead of on closing ─────────
+        # LEGACY (default): the seam fires only when a freshly generated
+        # successor matches the opposite CLOSED set. meet_on_generate=True fires
+        # as soon as both frontiers have GENERATED the shared state — ~11% fewer
+        # expansions, but can pick a slightly suboptimal seam. Kept available;
+        # default reverted to legacy to keep the focus on anchor selection
+        # (full front-to-front) as the next thing to study.
+        self.meet_on_generate: bool = False
         self.fkey_gen_f: Dict[str, str] = {}   # full-key -> fwd hash, all generated
         self.fkey_gen_b: Dict[str, str] = {}   # full-key -> bwd hash, all generated
 

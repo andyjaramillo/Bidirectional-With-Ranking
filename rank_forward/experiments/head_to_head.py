@@ -37,7 +37,7 @@ FULL_GOAL = os.environ.get("H2H_FULL_GOAL", "1").lower() in ("1", "true", "yes",
 # config — detects the seam as soon as both frontiers generate the shared state,
 # cutting ~11% of expansions wasted past a valid seam. Applies to BOTH the
 # bidirectional training (via online_run) and its eval here.
-MEET_ON_GEN = os.environ.get("H2H_MEET_ON_GEN", "1").lower() in ("1", "true", "yes", "y", "on")
+MEET_ON_GEN = os.environ.get("H2H_MEET_ON_GEN", "0").lower() in ("1", "true", "yes", "y", "on")
 
 boards = get_solvable_data(limit=N_TRAIN + N_EVAL)
 eval_boards = boards[N_TRAIN:N_TRAIN + N_EVAL]

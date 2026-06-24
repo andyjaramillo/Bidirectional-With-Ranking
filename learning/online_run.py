@@ -73,7 +73,7 @@ USE_G = os.environ.get("USE_G", "yes").lower() == "yes"
 # Detect the frontier meeting as soon as both sides have GENERATED the shared
 # state (default), instead of only when one side has CLOSED it — avoids ~11%
 # of node expansions wasted past a valid seam. "no" restores legacy behavior.
-MEET_ON_GENERATE = os.environ.get("MEET_ON_GENERATE", "yes").lower() == "yes"
+MEET_ON_GENERATE = os.environ.get("MEET_ON_GENERATE", "no").lower() == "yes"
 # Training device. Search always runs on a CPU twin regardless.
 TRAIN_DEVICE = os.environ.get("TRAIN_DEVICE", "cpu").lower()
 # Periodic re-mining: re-solve & re-mine 1 old puzzle every K_REMINE solves
