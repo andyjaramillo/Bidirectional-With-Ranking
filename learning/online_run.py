@@ -74,6 +74,11 @@ USE_G = os.environ.get("USE_G", "yes").lower() == "yes"
 # state (default), instead of only when one side has CLOSED it — avoids ~11%
 # of node expansions wasted past a valid seam. "no" restores legacy behavior.
 MEET_ON_GENERATE = os.environ.get("MEET_ON_GENERATE", "no").lower() == "yes"
+# Full front-to-front: score nodes against the WHOLE opponent open frontier
+# (min over all live opponent open nodes) instead of the single temporal anchor.
+# In principle slow; applies to BOTH the training solves and the CPU twin so the
+# NN learns under the same search the eval uses.
+FULL_F2F = os.environ.get("FULL_F2F", "no").lower() == "yes"
 # Training device. Search always runs on a CPU twin regardless.
 TRAIN_DEVICE = os.environ.get("TRAIN_DEVICE", "cpu").lower()
 # Periodic re-mining: re-solve & re-mine 1 old puzzle every K_REMINE solves
@@ -87,6 +92,7 @@ def run_search(puzzle, nn_model=None):
     s = BidirectionalF2FSearch(puzzle, nn_model)
     s.use_g_in_f = USE_G
     s.meet_on_generate = MEET_ON_GENERATE
+    s.full_f2f = FULL_F2F
     t0 = time.time()
     path = s.search(max_iterations=MAX_ITERS)
     return path, s, time.time() - t0

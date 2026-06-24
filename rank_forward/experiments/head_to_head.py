@@ -38,6 +38,10 @@ FULL_GOAL = os.environ.get("H2H_FULL_GOAL", "1").lower() in ("1", "true", "yes",
 # cutting ~11% of expansions wasted past a valid seam. Applies to BOTH the
 # bidirectional training (via online_run) and its eval here.
 MEET_ON_GEN = os.environ.get("H2H_MEET_ON_GEN", "0").lower() in ("1", "true", "yes", "y", "on")
+# Full front-to-front for the bidirectional side (the NN x full-F2F experiment):
+# score against the whole opponent frontier, not the single anchor. Applies to
+# BOTH the bidirectional training (via online_run) and its eval. Slow.
+FULL_F2F = os.environ.get("H2H_FULL_F2F", "0").lower() in ("1", "true", "yes", "y", "on")
 
 boards = get_solvable_data(limit=N_TRAIN + N_EVAL)
 eval_boards = boards[N_TRAIN:N_TRAIN + N_EVAL]
@@ -100,6 +104,7 @@ print(f"\n[H2H] ===== BIDIRECTIONAL side (training on first {N_TRAIN} via online
       flush=True)
 os.environ["N_TOTAL"] = str(N_TRAIN)
 os.environ["MEET_ON_GENERATE"] = "yes" if MEET_ON_GEN else "no"
+os.environ["FULL_F2F"] = "yes" if FULL_F2F else "no"
 import learning.online_run as orun
 from search.AI_Bidirectional import BidirectionalF2FSearch
 
@@ -113,6 +118,7 @@ def eval_bd(nn):
         s = BidirectionalF2FSearch(p, nn)
         s.use_g_in_f = True
         s.meet_on_generate = MEET_ON_GEN
+        s.full_f2f = FULL_F2F
         path = s.search(max_iterations=MAX_ITERS)
         # Expansion count = total nodes whose successors were generated, summed
         # over BOTH frontiers = len(closed_f)+len(closed_b). This is exactly the
