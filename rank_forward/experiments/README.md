@@ -20,6 +20,7 @@ Optimal training trajectories are solved once and cached under
 | `head_to_head.py` | forward (ranking heuristic) vs bidirectional F2F on the same held-out split, same goal, same node-expansion unit; absolute-expansion table | `PYTHONPATH=. python rank_forward/experiments/head_to_head.py` |
 | `loss_sweep.py` | trains all five losses (L\*, L_gbfs, L2, L_rt, Bellman), evaluates each in A\* and GBFS vs the blind baseline | `PYTHONPATH=. python rank_forward/experiments/loss_sweep.py` |
 | `forward_fullgoal.py` | forward-only (L_gbfs + L\*) under the full goal — the quick way to the corrected forward numbers without the bidirectional run | `PYTHONPATH=. python rank_forward/experiments/forward_fullgoal.py` |
+| `anchor_strategy_run.py` | one anchor-selection strategy (`temporal`/`top_of_open`/`closest_anchor`) trained on-policy + evaluated on the held-out tail — the anchor-search study | `N_TOTAL=1800 ANCHOR_STRATEGY=top_of_open NEVAL=200 PYTHONPATH=. python rank_forward/experiments/anchor_strategy_run.py` |
 
 ### Common env knobs
 `N_TOTAL`/`H2H_NTRAIN`+`H2H_NEVAL` (split sizes), `STEPS`/`H2H_FWD_STEPS`
@@ -36,6 +37,32 @@ Forward ranking is competitive with the bidirectional method: forward `L*`/A\*
 solves ~196/200 (≈ bidirectional 198/200) with a **lower median** expansion
 count, while bidirectional keeps a **lower mean** (lighter hard-instance tail).
 See the git history / session notes for the full table.
+
+## Anchor-selection (anchor search) results
+
+Anchor search (Lavasani 2024) frames bidirectional F2F as: each side scores its
+nodes against the opponent's single representative **anchor**. *How* that anchor
+is chosen is the "anchor selection" axis. Our TTBS uses `temporal` (anchor = the
+opponent's most-recently-expanded node). We compared three strategies through
+the **identical on-policy pipeline** (train the NN on 1800 on-policy, eval frozen
+on the held-out 200, `MAX_ITERS=10000`, same `SmallCNN`/metric):
+
+| anchor strategy | learned solved | learned median | learned mean | blind median |
+|---|---:|---:|---:|---:|
+| `temporal` (ours, TTBS control) | 199/200 | 255 | 700 | 545 |
+| **`top_of_open`** (paper-faithful TTBS d-node) | 199/200 | **167** | 683 | 564 |
+| `closest_anchor` (policy A) | 194/200 | 239 | 669 | 506 |
+
+**`top_of_open` wins** — ~35% lower median expansions than our `temporal` anchor
+at the same solve rate (199/200) and comparable training cost. Notably this is a
+**learned-heuristic effect**: with the blind/analytic heuristic `top_of_open` is
+slightly *worse* (median 564 vs 545); the benefit appears only with the learned
+NN (the NN × anchor-selection interaction). `closest_anchor` (policy A) has the
+best mean but a slightly lower solve rate and ~50% slower training.
+
+Single seed — the 167-vs-255 gap is large but should be replicated across seeds
+before being treated as a strong claim. Run via `anchor_strategy_run.py` once per
+strategy (under `caffeinate`).
 
 ## Fairness notes (read before trusting the numbers)
 
