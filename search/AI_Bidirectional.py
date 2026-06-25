@@ -145,6 +145,12 @@ class BidirectionalF2FSearch:
         #   "closest_anchor" — policy A: a side moves its anchor to a just-
         #                      expanded node only if that node is strictly closer
         #                      (by h) to the opponent's anchor (meet-in-middle).
+        #   "hybrid_af"      — AST_AF: forward side uses policy A (moving anchor),
+        #                      backward side uses policy F (anchor fixed at its
+        #                      goal seed, never updated). So forward scores F2E
+        #                      toward the goal and backward scores F2F toward
+        #                      forward's moving anchor (heuristic diversified
+        #                      across directions).
         # The pairwise heuristic h(a,b) (learned NN or analytic) is unchanged;
         # only which (a,b) pairs anchor the scoring differs.
         self.anchor_strategy: str = "temporal"
@@ -559,16 +565,22 @@ class BidirectionalF2FSearch:
         fkey_map_self[fk] = u_hash
 
         # Update this side's anchor per the anchor-selection strategy.
-        if self.anchor_strategy == "closest_anchor":
-            # Policy A: adopt the just-expanded node as the anchor only if it is
-            # strictly closer (by h) to the opponent anchor than the current one.
-            opp_a = getattr(self, opp_anch)
-            cur_a = getattr(self, cur_anch)
-            if opp_a is None or cur_a is None:
-                setattr(self, cur_anch, u_hash)
-            elif self._pair_h(u_hash, opp_a, game, opp_game) < \
-                    self._pair_h(cur_a, opp_a, game, opp_game):
-                setattr(self, cur_anch, u_hash)
+        if self.anchor_strategy in ("closest_anchor", "hybrid_af"):
+            # Policy A on the relevant side(s): adopt the just-expanded node as
+            # the anchor only if it is strictly closer (by h) to the opponent
+            # anchor than the current one (meet-in-middle). closest_anchor uses A
+            # on BOTH sides; hybrid_af uses A on the forward side and F (fixed,
+            # no update) on the backward side, so anchor_b stays at the goal seed.
+            side_uses_A = (self.anchor_strategy == "closest_anchor") or is_forward
+            if side_uses_A:
+                opp_a = getattr(self, opp_anch)
+                cur_a = getattr(self, cur_anch)
+                if opp_a is None or cur_a is None:
+                    setattr(self, cur_anch, u_hash)
+                elif self._pair_h(u_hash, opp_a, game, opp_game) < \
+                        self._pair_h(cur_a, opp_a, game, opp_game):
+                    setattr(self, cur_anch, u_hash)
+            # else policy F: leave this side's anchor fixed (no update).
         else:
             # "temporal" (default): last-expanded becomes the anchor.
             # "top_of_open": stored value is unused (anchor read from live OPEN),
