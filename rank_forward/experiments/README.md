@@ -47,22 +47,31 @@ opponent's most-recently-expanded node). We compared three strategies through
 the **identical on-policy pipeline** (train the NN on 1800 on-policy, eval frozen
 on the held-out 200, `MAX_ITERS=10000`, same `SmallCNN`/metric):
 
-| anchor strategy | learned solved | learned median | learned mean | blind median |
-|---|---:|---:|---:|---:|
-| `temporal` (ours, TTBS control) | 199/200 | 255 | 700 | 545 |
-| **`top_of_open`** (paper-faithful TTBS d-node) | 199/200 | **167** | 683 | 564 |
-| `closest_anchor` (policy A) | 194/200 | 239 | 669 | 506 |
+**Seed 0 (single seed)** suggested `top_of_open` wins big — learned median 167 vs
+`temporal` 255 (−35%) at equal solve rate, with `closest_anchor` at 239. But this
+**did not replicate.**
 
-**`top_of_open` wins** — ~35% lower median expansions than our `temporal` anchor
-at the same solve rate (199/200) and comparable training cost. Notably this is a
-**learned-heuristic effect**: with the blind/analytic heuristic `top_of_open` is
-slightly *worse* (median 564 vs 545); the benefit appears only with the learned
-NN (the NN × anchor-selection interaction). `closest_anchor` (policy A) has the
-best mean but a slightly lower solve rate and ~50% slower training.
+**Replication across 3 seeds (learned median / mean / solved):**
 
-Single seed — the 167-vs-255 gap is large but should be replicated across seeds
-before being treated as a strong claim. Run via `anchor_strategy_run.py` once per
-strategy (under `caffeinate`).
+| seed | `temporal` | `top_of_open` |
+|---|---|---|
+| 0 | 255 / 700 / 199 | 167 / 683 / 199 |
+| 1 | 155 / 491 / 197 | 183 / 645 / 199 |
+| 2 | 183 / 624 / 197 | 212 / 581 / 196 |
+| **avg** | **198** / 605 / 197.7 | **188** / 636 / 198 |
+
+**Verdict: the strategies are comparable; the single-seed 35% gap was seed noise.**
+The median ranges overlap heavily (`temporal` 155–255 vs `top_of_open` 167–212);
+`temporal`'s mean is actually slightly lower (605 vs 636) and solve rates are tied
+(~197–198/200). `top_of_open` is only modestly more *consistent* (spread ±23 vs
+±50) — not enough to outweigh `temporal`'s lower mean, simplicity, and speed. So
+**`temporal` stays the default**; the paper-faithful anchor is not meaningfully
+better under the learned heuristic at this scale. (Note: the *blind/analytic*
+heuristic is seed-independent — `temporal` 545 vs `top_of_open` 564 vs
+`closest_anchor` 506.)
+
+Run via `anchor_strategy_run.py` once per (seed, strategy), under `caffeinate`.
+Lesson: replicate across seeds before acting on a single-seed gap.
 
 ## Fairness notes (read before trusting the numbers)
 
