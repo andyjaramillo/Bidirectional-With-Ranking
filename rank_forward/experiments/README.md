@@ -53,22 +53,31 @@ on the held-out 200, `MAX_ITERS=10000`, same `SmallCNN`/metric):
 
 **Replication across 3 seeds (learned median / mean / solved):**
 
-| seed | `temporal` | `top_of_open` |
-|---|---|---|
-| 0 | 255 / 700 / 199 | 167 / 683 / 199 |
-| 1 | 155 / 491 / 197 | 183 / 645 / 199 |
-| 2 | 183 / 624 / 197 | 212 / 581 / 196 |
-| **avg** | **198** / 605 / 197.7 | **188** / 636 / 198 |
+| strategy | seed 0 | seed 1 | seed 2 | avg median | avg mean |
+|---|---|---|---|---:|---:|
+| `temporal` (ours) | 255/700/199 | 155/491/197 | 183/624/197 | **198** | 605 |
+| `top_of_open` (paper TTBS) | 167/683/199 | 183/645/199 | 212/581/196 | **188** | 636 |
+| `hybrid_af` (AST_AF) | 238/625/197 | 244/680/199 | 215/686/199 | **232** | 664 |
+| `closest_anchor` (policy A) | 239/669/194 | — | — | (239, 1 seed) | 669 |
 
-**Verdict: the strategies are comparable; the single-seed 35% gap was seed noise.**
-The median ranges overlap heavily (`temporal` 155–255 vs `top_of_open` 167–212);
-`temporal`'s mean is actually slightly lower (605 vs 636) and solve rates are tied
-(~197–198/200). `top_of_open` is only modestly more *consistent* (spread ±23 vs
-±50) — not enough to outweigh `temporal`'s lower mean, simplicity, and speed. So
-**`temporal` stays the default**; the paper-faithful anchor is not meaningfully
-better under the learned heuristic at this scale. (Note: the *blind/analytic*
-heuristic is seed-independent — `temporal` 545 vs `top_of_open` 564 vs
+**Verdict: anchor selection is a wash under the learned heuristic.** All strategies
+land within the seed-noise band — `temporal` alone spans 155–255. By 3-seed
+average learned median: `top_of_open` 188 ≤ `temporal` 198 < `hybrid_af` 232
+(≈ `closest_anchor` 239, 1 seed); but `temporal` has the lowest *mean* (605), all
+have tied solve rates (~197–198/200), and the gaps are inside the noise. The
+seed-0 "`top_of_open` −35%" was noise. `hybrid_af` (the thesis's most-robust
+variant) is the most *consistent* (median 215–244) yet slightly *worse* than
+`temporal` on median and mean — its robustness on hard classical-planning domains
+does not translate to a win on this single Sokoban domain with the learned NN.
+**`temporal` stays the default** (simplest, fastest, lowest mean). (Blind/analytic,
+seed-independent: `temporal` 545, `top_of_open` 564, `hybrid_af` 583,
 `closest_anchor` 506.)
+
+**Conclusion of the anchor-search investigation:** having tried every instantiation
+with a thesis-backed reason to differ — `temporal`, `top_of_open`, `closest_anchor`
+(policy A), `hybrid_af` (AST_AF), plus full-front-to-front via the separate
+`full_f2f` flag — **none meaningfully beats our simple temporal anchor under the
+learned heuristic.** Anchor selection is not a lever for this method/domain.
 
 Run via `anchor_strategy_run.py` once per (seed, strategy), under `caffeinate`.
 Lesson: replicate across seeds before acting on a single-seed gap.
