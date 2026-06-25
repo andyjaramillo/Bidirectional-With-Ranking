@@ -134,6 +134,21 @@ class BidirectionalF2FSearch:
         self.last_ver_f: Dict[str, int] = {}
         self.last_ver_b: Dict[str, int] = {}
 
+        # ── Anchor-selection strategy (anchor search framework) ─────────
+        # Each side scores its nodes front-to-front against the OPPONENT's
+        # "anchor". How that anchor is chosen is the anchor-selection axis
+        # (Lavasani, "Anchor Search", 2024):
+        #   "temporal"       — anchor = opponent's most-recently-EXPANDED node
+        #                      (our original TTBS; the DEFAULT, byte-identical).
+        #   "top_of_open"    — anchor = lowest-f LIVE node in the opponent's OPEN
+        #                      (paper-faithful TTBS d-node).
+        #   "closest_anchor" — policy A: a side moves its anchor to a just-
+        #                      expanded node only if that node is strictly closer
+        #                      (by h) to the opponent's anchor (meet-in-middle).
+        # The pairwise heuristic h(a,b) (learned NN or analytic) is unchanged;
+        # only which (a,b) pairs anchor the scoring differs.
+        self.anchor_strategy: str = "temporal"
+
         # ── Solution tracking ──────────────────────────────────────────
         self.U: float = float('inf')
         self.meeting_fwd: Optional[str] = None
@@ -336,6 +351,43 @@ class BidirectionalF2FSearch:
         best = min(active_game.evaluateBoard(node_map, o) for o in others)
         return float(g + best)
 
+    # ── Anchor-selection helpers (anchor_strategy != "temporal") ───────────
+    def _pair_h(self, node_hash: str, opp_anchor_hash: Optional[str],
+                active_game: SokobanGame, opp_game: SokobanGame) -> float:
+        """Pairwise heuristic h(node, opp_anchor): the learned NN distance
+        (clamped >=0) or the analytic MWPM-Manhattan fallback, between an
+        active-side node and the opponent anchor flipped into the active frame.
+        h-only (no g); mirrors the h term of _f_score_nn. Used by closest_anchor."""
+        node_map = active_game.decodeMap(node_hash)
+        other = self._anchor_other(opp_anchor_hash, active_game, opp_game)
+        if self.nn is not None:
+            import torch
+            with torch.no_grad():
+                return max(0.0, float(self.nn(node_map, active_game.target, other).item()))
+        return float(active_game.evaluateBoard(node_map, other))
+
+    def _get_opp_anchor(self, is_forward: bool):
+        """The opponent side's anchor for this expansion, per anchor_strategy.
+        'temporal'/'closest_anchor' read the stored anchor (maintained at
+        expansion time); 'top_of_open' returns the lowest-f LIVE node in the
+        opponent OPEN (the paper-faithful TTBS d-node)."""
+        opp_anch = 'anchor_b' if is_forward else 'anchor_f'
+        if self.anchor_strategy == "top_of_open":
+            opp_heap = self.open_b if is_forward else self.open_f
+            opp_closed = self.closed_b if is_forward else self.closed_f
+            opp_g = self.g_b if is_forward else self.g_f
+            best = None
+            for f, neg_g, h in opp_heap:
+                if h in opp_closed:
+                    continue
+                if opp_g.get(h, float('inf')) < (-neg_g):
+                    continue
+                if best is None or f < best[0]:
+                    best = (f, h)
+            if best is not None:
+                return best[1]
+        return getattr(self, opp_anch)   # temporal / closest_anchor / empty fallback
+
     def _push(self, heap: List, f: float, g: int, h: str) -> None:
         heapq.heappush(heap, (f, -g, h))   # neg_g: deeper = smaller = better tie
 
@@ -440,7 +492,9 @@ class BidirectionalF2FSearch:
         meet_set = fkey_gen_opp if self.meet_on_generate else fkey_opp
         meet_map = fkey_gen_opp if self.meet_on_generate else fkey_map_opp
 
-        opp_anchor = getattr(self, opp_anch)
+        # Opponent anchor per anchor_strategy ("temporal" returns the stored
+        # last-expanded value verbatim — byte-identical default).
+        opp_anchor = self._get_opp_anchor(is_forward)
 
         # ── FULL front-to-front: snapshot the opponent OPEN frontier once per
         # expansion (it cannot change mid-expansion — only the active side runs)
@@ -504,8 +558,22 @@ class BidirectionalF2FSearch:
         fkey_closed.add(fk)
         fkey_map_self[fk] = u_hash
 
-        # Update temporal anchor
-        setattr(self, cur_anch, u_hash)
+        # Update this side's anchor per the anchor-selection strategy.
+        if self.anchor_strategy == "closest_anchor":
+            # Policy A: adopt the just-expanded node as the anchor only if it is
+            # strictly closer (by h) to the opponent anchor than the current one.
+            opp_a = getattr(self, opp_anch)
+            cur_a = getattr(self, cur_anch)
+            if opp_a is None or cur_a is None:
+                setattr(self, cur_anch, u_hash)
+            elif self._pair_h(u_hash, opp_a, game, opp_game) < \
+                    self._pair_h(cur_a, opp_a, game, opp_game):
+                setattr(self, cur_anch, u_hash)
+        else:
+            # "temporal" (default): last-expanded becomes the anchor.
+            # "top_of_open": stored value is unused (anchor read from live OPEN),
+            # so this write is harmless.
+            setattr(self, cur_anch, u_hash)
 
         # ── Expand successors ─────────────────────────────────────────
         game.puzzle = u_map   # required by availableStates

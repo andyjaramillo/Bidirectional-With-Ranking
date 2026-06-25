@@ -42,6 +42,10 @@ MEET_ON_GEN = os.environ.get("H2H_MEET_ON_GEN", "0").lower() in ("1", "true", "y
 # score against the whole opponent frontier, not the single anchor. Applies to
 # BOTH the bidirectional training (via online_run) and its eval. Slow.
 FULL_F2F = os.environ.get("H2H_FULL_F2F", "0").lower() in ("1", "true", "yes", "y", "on")
+# Anchor-selection strategy for the bidirectional side (the anchor-search study):
+# "temporal" (our TTBS, default), "top_of_open" (paper-faithful TTBS), or
+# "closest_anchor" (policy A). Applies to BOTH bidirectional training and eval.
+ANCHOR_STRATEGY = os.environ.get("H2H_ANCHOR_STRATEGY", "temporal").lower()
 
 boards = get_solvable_data(limit=N_TRAIN + N_EVAL)
 eval_boards = boards[N_TRAIN:N_TRAIN + N_EVAL]
@@ -105,6 +109,7 @@ print(f"\n[H2H] ===== BIDIRECTIONAL side (training on first {N_TRAIN} via online
 os.environ["N_TOTAL"] = str(N_TRAIN)
 os.environ["MEET_ON_GENERATE"] = "yes" if MEET_ON_GEN else "no"
 os.environ["FULL_F2F"] = "yes" if FULL_F2F else "no"
+os.environ["ANCHOR_STRATEGY"] = ANCHOR_STRATEGY
 import learning.online_run as orun
 from search.AI_Bidirectional import BidirectionalF2FSearch
 
@@ -119,6 +124,7 @@ def eval_bd(nn):
         s.use_g_in_f = True
         s.meet_on_generate = MEET_ON_GEN
         s.full_f2f = FULL_F2F
+        s.anchor_strategy = ANCHOR_STRATEGY
         path = s.search(max_iterations=MAX_ITERS)
         # Expansion count = total nodes whose successors were generated, summed
         # over BOTH frontiers = len(closed_f)+len(closed_b). This is exactly the
