@@ -155,6 +155,18 @@ class BidirectionalF2FSearch:
         # only which (a,b) pairs anchor the scoring differs.
         self.anchor_strategy: str = "temporal"
 
+        # ── Per-expansion anchor log (for the genuine ranking loss) ─────
+        # When True, every expansion records the opponent anchor that was
+        # live when the node was closed — i.e. the exact F2F target its
+        # children were scored against (the survivor-scoring pass uses this
+        # same opp_anchor). Off by default so normal solves/evals pay nothing.
+        # Lets a post-solve trainer replay each step and enforce the
+        # perfect-ranking condition (the on-path child must have the lowest
+        # f among its siblings) against the per-step anchor the search used.
+        self.log_expansions: bool = False
+        self.expand_anchor_f: Dict[str, Optional[str]] = {}
+        self.expand_anchor_b: Dict[str, Optional[str]] = {}
+
         # ── Solution tracking ──────────────────────────────────────────
         self.U: float = float('inf')
         self.meeting_fwd: Optional[str] = None
@@ -557,6 +569,14 @@ class BidirectionalF2FSearch:
         # ── Close node ────────────────────────────────────────────────
         closed.add(u_hash)
 
+        # Record the anchor this node's children are about to be scored
+        # against (opp_anchor is fixed for the whole expansion and is what
+        # the survivor-scoring pass below uses). Logged at close so a later
+        # ranking-loss trainer can rebuild the exact per-step F2F target.
+        if self.log_expansions:
+            (self.expand_anchor_f if is_forward
+             else self.expand_anchor_b)[u_hash] = opp_anchor
+
         # Register meeting keys for this side (forward-frame).
         u_map    = game.decodeMap(u_hash)
         u_fwd    = u_map if is_forward else game.flipGame(u_map)
@@ -761,6 +781,35 @@ class BidirectionalF2FSearch:
             curr = self.parent_b.get(curr)
 
         return path_f + path_b
+
+    def reconstruct_segments(self) -> Tuple[List[str], List[str]]:
+        """Split the solution path by frontier, each in its OWN game frame,
+        ordered seed → meeting:
+
+            fwd_chain: [start, ..., meeting_fwd]   (forward-game hashes)
+            bwd_chain: [goal,  ..., meeting_bwd]   (backward-game hashes)
+
+        Consecutive entries are parent → child in that frontier's search
+        tree, so ``chain[i]`` was expanded to generate ``chain[i+1]``. Unlike
+        ``reconstruct_path`` (which flips everything into the forward frame and
+        concatenates), this keeps each side's native hashes so the per-step
+        anchor log and the induced-graph edges can be looked up directly.
+        """
+        if self.meeting_fwd is None:
+            return [], []
+        fwd: List[str] = []
+        curr = self.meeting_fwd
+        while curr is not None:
+            fwd.append(curr)
+            curr = self.parent_f.get(curr)
+        fwd.reverse()
+        bwd: List[str] = []
+        curr = self.meeting_bwd
+        while curr is not None:
+            bwd.append(curr)
+            curr = self.parent_b.get(curr)
+        bwd.reverse()
+        return fwd, bwd
 
     # ──────────────────────────────────────────────────────────────────
     # Public search interface
