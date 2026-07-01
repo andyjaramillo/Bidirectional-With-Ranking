@@ -86,6 +86,10 @@ RANK_GBFS = os.environ.get("RANK_GBFS", "no").lower() == "yes"
 #     among its siblings, per-step anchor). Assumes near-optimal paths; shown to
 #     be unstable here (2/3 seeds worse than blind). See bidir_ranking_loss.
 RANK_MODE = os.environ.get("RANK_MODE", "pathorder").lower()
+# Weight of the light scale anchor (mean|h - path_dist|) added to the pathorder
+# ordering term. Pins h's magnitude so pure ordering can't drift to a clamped/
+# degenerate scale the f=g+h search can't use. 0 = pure ordering (shown to fail).
+PATHORDER_SCALE_W = float(os.environ.get("PATHORDER_SCALE_W", "0.1"))
 # If "no", drop g from the f-score (GBFS instead of A*-style).
 USE_G = os.environ.get("USE_G", "yes").lower() == "yes"
 # Detect the frontier meeting as soon as both sides have GENERATED the shared
@@ -272,7 +276,8 @@ print(f"  done in {time.time()-t0:.1f}s  mean iters={np.mean(base_iters):.1f}  "
 
 # ── Model(s): training model on TRAIN_DEVICE, CPU twin for search ──────────
 if RANK_LOSS:
-    _loss_desc = (f"RANKING(pathorder)" if RANK_MODE == "pathorder"
+    _loss_desc = (f"RANKING(pathorder,scale_w={PATHORDER_SCALE_W})"
+                  if RANK_MODE == "pathorder"
                   else f"RANKING(perfect,{'L_gbfs' if RANK_GBFS else 'L*'})")
 else:
     _loss_desc = f"{LOSS}/{REG_LOSS}"
@@ -341,7 +346,7 @@ for n, p in enumerate(puzzles):
             for _ in range(UPDATES_PER_SOLVE):
                 optimizer.zero_grad()
                 if RANK_MODE == "pathorder":
-                    loss = bidir_pathorder_loss(train_model, s)
+                    loss = bidir_pathorder_loss(train_model, s, scale_w=PATHORDER_SCALE_W)
                 else:
                     loss = bidir_ranking_loss(train_model, s, use_g=USE_G, gbfs=RANK_GBFS)
                 if loss is None:

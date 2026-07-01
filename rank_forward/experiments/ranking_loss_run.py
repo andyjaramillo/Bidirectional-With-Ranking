@@ -34,7 +34,8 @@ model = orun.search_model
 model.eval()
 
 if orun.RANK_LOSS:
-    LOSS_DESC = ("RANKING(pathorder)" if orun.RANK_MODE == "pathorder"
+    LOSS_DESC = (f"RANKING(pathorder,scale_w={orun.PATHORDER_SCALE_W})"
+                 if orun.RANK_MODE == "pathorder"
                  else f"RANKING(perfect,{'L_gbfs' if orun.RANK_GBFS else 'L*'})")
 else:
     LOSS_DESC = f"{orun.LOSS}/{orun.REG_LOSS}"

@@ -136,7 +136,7 @@ def bidir_ranking_loss(model, s, use_g=True, gbfs=False):
     return torch.stack(terms).sum()
 
 
-def bidir_pathorder_loss(model, s, max_pairs=256):
+def bidir_pathorder_loss(model, s, max_pairs=256, scale_w=0.0):
     """Weaker, OPTIMALITY-FREE ranking loss over on-path pairs.
 
     The perfect-ranking loss (``bidir_ranking_loss``) penalises an off-path
@@ -159,8 +159,16 @@ def bidir_pathorder_loss(model, s, max_pairs=256):
     the later path node -- the forward-side F2F query direction (the later node
     y, in the forward frame, plays the role of the flipped opponent anchor).
 
-    Returns a scalar (mean softplus over ordered comparisons), or None if the
-    path is too short to form pairs at two different distances.
+    ``scale_w > 0`` adds a light scale anchor ``scale_w * mean|h - d_path|``.
+    Pure ordering leaves h's absolute scale/offset free, so it can drift to a
+    degenerate regime -- e.g. h centered at 0, half of which the search's
+    ``clamp_min(0)`` zeroes out, making f=g+h uninformative (worse than blind).
+    The anchor pins h's magnitude to the (path) distance so it stays a usable
+    heuristic, while the ordering term supplies the fine, optimality-free
+    structure. ``scale_w=0`` recovers the pure path-order loss.
+
+    Returns a scalar loss, or None if the path is too short to form pairs at two
+    different distances.
     """
     path = s.reconstruct_path()          # forward-frame hashes, start -> goal
     L = len(path)
@@ -174,15 +182,20 @@ def bidir_pathorder_loss(model, s, max_pairs=256):
         pairs = pairs[::stride]
     states = [boards[i] for i, _ in pairs]
     others = [boards[j] for _, j in pairs]
-    dist = torch.tensor([j - i for i, j in pairs], dtype=torch.float32)
 
     h = model.forward_batch(states, [target] * len(pairs), others)
     if h.ndim == 0:
         h = h.unsqueeze(0)
-    # Comparisons where pair p is strictly closer than pair q (d[p] < d[q]);
-    # penalise softplus(h[p] - h[q]) so the closer pair gets the smaller h.
+    dist = torch.tensor([j - i for i, j in pairs],
+                        dtype=h.dtype, device=h.device)
+    # Optimality-free ORDERING term: for pairs p, q with d[p] < d[q], penalise
+    # softplus(h[p] - h[q]) so the closer pair gets the smaller h.
     mask = dist.unsqueeze(1) < dist.unsqueeze(0)          # (n, n)
-    if not bool(mask.any()):
-        return h.sum() * 0.0
-    D = h.unsqueeze(1) - h.unsqueeze(0)                   # (n, n) = h[p] - h[q]
-    return F.softplus(D[mask]).mean()
+    if bool(mask.any()):
+        D = h.unsqueeze(1) - h.unsqueeze(0)               # (n, n) = h[p] - h[q]
+        rank_term = F.softplus(D[mask]).mean()
+    else:
+        rank_term = h.sum() * 0.0
+    if scale_w > 0.0:
+        return rank_term + scale_w * F.l1_loss(h, dist)
+    return rank_term
