@@ -113,18 +113,58 @@ fewer solved (177–178 vs 194), ~2× the median and mean expansions. Only seed 
 worked (360 median, beats blind). The MSE+margin baseline is **rock-solid across
 all three seeds** (median 160–247, ~197/200 solved, ~2.5× faster than blind).
 
-The cause is the **free scale of pure ranking**: the loss only constrains the
-*relative* h of same-depth siblings, so h's absolute magnitude drifts freely —
-and the `f = g + h` search is scale-sensitive (h too large → over-greedy, too
-small → BFS-like). The combined loss's regression term pins that scale, which is
-exactly what makes it robust. The ranking *condition* is sound and trainable; as
-a **standalone** objective for this F2F method it is not viable. **Keep MSE+margin
-as default; `RANK_LOSS` stays available for research.** (On-policy training-curve
-medians are a poor proxy here — pure ranking shows ~x0.5 on-policy at *all* seeds,
-yet seed 0's frozen model is good and seeds 1–2's are bad; trust the frozen
-held-out eval, not the trajectory average.) Natural next step if revisited: add a
-light scale anchor (a small regression/Bellman term, or normalize h) to the
-ranking loss and re-test stability.
+Two candidate causes: **(a) non-optimal paths** — our paths are satisficing, so
+penalising an off-path sibling that is genuinely better teaches h to avoid good
+states; and **(b) free scale** — the loss only constrains *relative* h of
+same-depth siblings, so h's magnitude drifts, and `f=g+h` is scale-sensitive.
+The next two experiments isolate these.
+
+### Path-order ranking (`RANK_MODE=pathorder`) — isolating the two causes
+
+An **optimality-free** ranking condition (`bidir_pathorder_loss`): never compares
+on-path vs off-path; only orders the pairwise h over on-path node pairs by their
+path distance — for on-path (x,y),(x',y'), if `d_path(x,y) < d_path(x',y')` then
+`h(x,y) < h(x',y')`. `d_path=|i-j|` is valid regardless of optimality, so it
+removes cause (a). It also ranks across many distance levels (not just
+same-depth), giving *some* scale information.
+
+**Pure path-order still failed** (seed 0 frozen `183 / 1227 / 2122`, worse than
+blind). So removing the optimality assumption was **not sufficient** — cause (b),
+the free scale/offset, dominates. Diagnostic: the trained h was ~zero-centred
+(range ≈[−10,+12]), and the search's `clamp_min(0)` zeroes ~half of it → `f≈g` →
+BFS-like → worse than the informative analytic blind heuristic.
+
+### Path-order + scale anchor (`PATHORDER_SCALE_W=0.1`) — this works
+
+Add a **light scale anchor** `0.1·mean|h − d_path|` to the path-order term. It
+pins h's magnitude to the distance scale while the ordering supplies the fine,
+optimality-free structure. (Verified in isolation: preserves ordering,
+spearman(h,d)≈0.97, and moves h to a positive distance-like range — 0% clamped,
+vs ~half before.)
+
+**3 seeds (learned solved / median / mean), held-out 200, blind = 194/545/1380:**
+
+| seed | path-order **pure** | path-order **+ scale anchor** | MSE+margin baseline |
+|---|---|---|---|
+| 0 | 183 / 1227 / 2122 | 199 / 337 / 996 | 197 / 247 / 726 |
+| 1 | (collapsed) | 199 / 305 / 910 | 198 / 160 / 607 |
+| 2 | (collapsed) | 196 / 247 / 636 | 197 / 225 / 710 |
+| **avg** | worse than blind | **197 / 296 / 847** | **197 / 211 / 681** |
+
+**Verdict: a ranking-based loss CAN train a robust bidirectional heuristic — but
+only with BOTH ingredients: an optimality-robust ordering signal AND scale
+calibration.** Scale-anchored path-order is **stable across all three seeds**
+(exactly where both pure-ranking variants collapsed below blind) and beats blind
+everywhere. It lands **slightly behind MSE+margin** on median/mean (296 vs 211;
+847 vs 681) and ties on solve rate (~197/200). Note this is *why* MSE+margin
+works: it already combines the two ingredients (MSE = scale calibration, margin =
+ranking). Path-order + anchor is a valid alternative realisation of the same
+recipe, not a free lunch over it. **MSE+margin stays default**; `RANK_MODE=
+pathorder PATHORDER_SCALE_W=k` is the working ranking variant for research.
+Open knob: `scale_w` (0.1 untuned — higher → closer to pure regression, lower →
+closer to the failed pure-ranking); a sweep might close the small gap to the
+baseline. (Caveat throughout: on-policy training-curve medians mislead — trust
+the frozen held-out eval.)
 
 ## Fairness notes (read before trusting the numbers)
 
