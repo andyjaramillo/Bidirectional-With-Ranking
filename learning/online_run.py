@@ -31,7 +31,7 @@ from game.getData import get_solvable_data
 from learning.nn import build_model
 from search.AI_Bidirectional import BidirectionalF2FSearch
 from learning.replay_buffer import ReplayBuffer
-from learning.ranking_loss import bidir_ranking_loss
+from learning.ranking_loss import bidir_ranking_loss, bidir_pathorder_loss
 
 SEED = int(os.environ.get("SEED", "0"))
 torch.manual_seed(SEED)
@@ -76,8 +76,16 @@ RANK_MARGIN = float(os.environ.get("RANK_MARGIN", "1.0"))
 # "yes" it REPLACES the MSE+margin buffer loss (the buffer still fills, to gate
 # warmup); default off, so the legacy loss above is untouched.
 RANK_LOSS = os.environ.get("RANK_LOSS", "no").lower() == "yes"
-# Under RANK_LOSS, rank on h only (L_gbfs) instead of g+h (L*).
+# Under RANK_LOSS, rank on h only (L_gbfs) instead of g+h (L*). (perfect mode.)
 RANK_GBFS = os.environ.get("RANK_GBFS", "no").lower() == "yes"
+# Which ranking condition RANK_LOSS enforces:
+#   "pathorder" (default) — the optimality-FREE condition: order pairwise h over
+#     on-path pairs by their path distance. Safe under satisficing (non-optimal)
+#     paths; never penalises off-path states. See bidir_pathorder_loss.
+#   "perfect" — the NeurIPS-2023 perfect-ranking condition (on-path child lowest
+#     among its siblings, per-step anchor). Assumes near-optimal paths; shown to
+#     be unstable here (2/3 seeds worse than blind). See bidir_ranking_loss.
+RANK_MODE = os.environ.get("RANK_MODE", "pathorder").lower()
 # If "no", drop g from the f-score (GBFS instead of A*-style).
 USE_G = os.environ.get("USE_G", "yes").lower() == "yes"
 # Detect the frontier meeting as soon as both sides have GENERATED the shared
@@ -116,9 +124,12 @@ def run_search(puzzle, nn_model=None):
     s.meet_on_generate = MEET_ON_GENERATE
     s.full_f2f = FULL_F2F
     s.anchor_strategy = ANCHOR_STRATEGY
-    # Record per-step anchors for the ranking loss — only on NN solves (the
-    # blind baseline pass discards its search, so logging there is wasted work).
-    s.log_expansions = RANK_LOSS and (nn_model is not None)
+    # Record per-step anchors for the ranking loss — only when the "perfect"
+    # mode needs them, and only on NN solves (the blind baseline pass discards
+    # its search, so logging there is wasted work). "pathorder" needs only the
+    # reconstructed path, so it logs nothing.
+    s.log_expansions = (RANK_LOSS and RANK_MODE == "perfect"
+                        and nn_model is not None)
     t0 = time.time()
     path = s.search(max_iterations=MAX_ITERS)
     return path, s, time.time() - t0
@@ -260,8 +271,11 @@ print(f"  done in {time.time()-t0:.1f}s  mean iters={np.mean(base_iters):.1f}  "
 
 
 # ── Model(s): training model on TRAIN_DEVICE, CPU twin for search ──────────
-_loss_desc = (f"RANKING({'L_gbfs' if RANK_GBFS else 'L*'}, per-step anchor)"
-              if RANK_LOSS else f"{LOSS}/{REG_LOSS}")
+if RANK_LOSS:
+    _loss_desc = (f"RANKING(pathorder)" if RANK_MODE == "pathorder"
+                  else f"RANKING(perfect,{'L_gbfs' if RANK_GBFS else 'L*'})")
+else:
+    _loss_desc = f"{LOSS}/{REG_LOSS}"
 print(f"\n[Online] batch={BATCH_SIZE} K={UPDATES_PER_SOLVE} warmup={WARMUP} "
       f"buffer={BUFFER_CAP} loss={_loss_desc} use_g={USE_G} "
       f"train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
@@ -326,7 +340,10 @@ for n, p in enumerate(puzzles):
         if path:
             for _ in range(UPDATES_PER_SOLVE):
                 optimizer.zero_grad()
-                loss = bidir_ranking_loss(train_model, s, use_g=USE_G, gbfs=RANK_GBFS)
+                if RANK_MODE == "pathorder":
+                    loss = bidir_pathorder_loss(train_model, s)
+                else:
+                    loss = bidir_ranking_loss(train_model, s, use_g=USE_G, gbfs=RANK_GBFS)
                 if loss is None:
                     break
                 loss.backward()

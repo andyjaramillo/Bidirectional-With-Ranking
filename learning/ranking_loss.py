@@ -134,3 +134,55 @@ def bidir_ranking_loss(model, s, use_g=True, gbfs=False):
         terms.append(F.softplus(f[0] - f[1:]).sum())
 
     return torch.stack(terms).sum()
+
+
+def bidir_pathorder_loss(model, s, max_pairs=256):
+    """Weaker, OPTIMALITY-FREE ranking loss over on-path pairs.
+
+    The perfect-ranking loss (``bidir_ranking_loss``) penalises an off-path
+    sibling for out-ranking the on-path child. That is only valid if the path is
+    OPTIMAL -- but our paths come from a satisficing bidirectional search, so a
+    sibling may genuinely be better, and penalising it teaches h to avoid good
+    states (the seed-1/2 collapses below blind).
+
+    This loss never compares on-path vs off-path. It only orders the PAIRWISE h
+    over pairs of on-path nodes by their path distance: for on-path pairs (x,y)
+    and (x',y'), if d_path(x,y) < d_path(x',y') then force h(x,y) < h(x',y').
+    Because the solution path is a valid step-by-step sequence, d_path(p_i,p_j) =
+    |i-j| is well-defined regardless of optimality -- so a non-optimal path still
+    gives valid ordering supervision. And because it ranks pairs across MANY
+    distance levels (d = 1..L), not just same-depth siblings, it also constrains
+    how h grows with distance (some scale information, which perfect-ranking
+    lacked entirely).
+
+    h(x,y) is queried as nn(state=x, target, other=y) with x the earlier and y
+    the later path node -- the forward-side F2F query direction (the later node
+    y, in the forward frame, plays the role of the flipped opponent anchor).
+
+    Returns a scalar (mean softplus over ordered comparisons), or None if the
+    path is too short to form pairs at two different distances.
+    """
+    path = s.reconstruct_path()          # forward-frame hashes, start -> goal
+    L = len(path)
+    if L < 3:
+        return None                      # need >=2 distinct pair-distances
+    boards = [s.forward_game.decodeMap(h) for h in path]
+    target = s.forward_game.target
+    pairs = [(i, j) for i in range(L) for j in range(i + 1, L)]  # i<j: earlier,later
+    if len(pairs) > max_pairs:           # deterministic stride keeps a spread of d
+        stride = (len(pairs) + max_pairs - 1) // max_pairs
+        pairs = pairs[::stride]
+    states = [boards[i] for i, _ in pairs]
+    others = [boards[j] for _, j in pairs]
+    dist = torch.tensor([j - i for i, j in pairs], dtype=torch.float32)
+
+    h = model.forward_batch(states, [target] * len(pairs), others)
+    if h.ndim == 0:
+        h = h.unsqueeze(0)
+    # Comparisons where pair p is strictly closer than pair q (d[p] < d[q]);
+    # penalise softplus(h[p] - h[q]) so the closer pair gets the smaller h.
+    mask = dist.unsqueeze(1) < dist.unsqueeze(0)          # (n, n)
+    if not bool(mask.any()):
+        return h.sum() * 0.0
+    D = h.unsqueeze(1) - h.unsqueeze(0)                   # (n, n) = h[p] - h[q]
+    return F.softplus(D[mask]).mean()

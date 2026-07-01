@@ -33,8 +33,11 @@ N_TRAIN = orun.N_TOTAL
 model = orun.search_model
 model.eval()
 
-LOSS_DESC = (f"RANKING({'L_gbfs' if orun.RANK_GBFS else 'L*'})"
-             if orun.RANK_LOSS else f"{orun.LOSS}/{orun.REG_LOSS}")
+if orun.RANK_LOSS:
+    LOSS_DESC = ("RANKING(pathorder)" if orun.RANK_MODE == "pathorder"
+                 else f"RANKING(perfect,{'L_gbfs' if orun.RANK_GBFS else 'L*'})")
+else:
+    LOSS_DESC = f"{orun.LOSS}/{orun.REG_LOSS}"
 
 boards = get_solvable_data(limit=N_TRAIN + N_EVAL)
 eval_boards = boards[N_TRAIN:N_TRAIN + N_EVAL]
