@@ -31,7 +31,6 @@ from game.getData import get_solvable_data
 from learning.nn import build_model
 from search.AI_Bidirectional import BidirectionalF2FSearch
 from learning.replay_buffer import ReplayBuffer
-from learning.ranking_loss import bidir_ranking_loss, bidir_pathorder_loss
 
 SEED = int(os.environ.get("SEED", "0"))
 torch.manual_seed(SEED)
@@ -69,27 +68,6 @@ LOSS = os.environ.get("LOSS", "both").lower()
 # Regression-term flavor for "mse"/"both": "mae" (L1) or "mse" (L2).
 REG_LOSS = os.environ.get("REG_LOSS", "mse").lower()
 RANK_MARGIN = float(os.environ.get("RANK_MARGIN", "1.0"))
-# Genuine ranking loss (NeurIPS-2023 perfect-ranking condition, ported to the
-# bidirectional F2F search in learning/ranking_loss.py): train PURELY on the
-# per-step condition "the on-path child has the lowest merit among its
-# siblings", scored against the exact per-step anchor the search used. When
-# "yes" it REPLACES the MSE+margin buffer loss (the buffer still fills, to gate
-# warmup); default off, so the legacy loss above is untouched.
-RANK_LOSS = os.environ.get("RANK_LOSS", "no").lower() == "yes"
-# Under RANK_LOSS, rank on h only (L_gbfs) instead of g+h (L*). (perfect mode.)
-RANK_GBFS = os.environ.get("RANK_GBFS", "no").lower() == "yes"
-# Which ranking condition RANK_LOSS enforces:
-#   "pathorder" (default) — the optimality-FREE condition: order pairwise h over
-#     on-path pairs by their path distance. Safe under satisficing (non-optimal)
-#     paths; never penalises off-path states. See bidir_pathorder_loss.
-#   "perfect" — the NeurIPS-2023 perfect-ranking condition (on-path child lowest
-#     among its siblings, per-step anchor). Assumes near-optimal paths; shown to
-#     be unstable here (2/3 seeds worse than blind). See bidir_ranking_loss.
-RANK_MODE = os.environ.get("RANK_MODE", "pathorder").lower()
-# Weight of the light scale anchor (mean|h - path_dist|) added to the pathorder
-# ordering term. Pins h's magnitude so pure ordering can't drift to a clamped/
-# degenerate scale the f=g+h search can't use. 0 = pure ordering (shown to fail).
-PATHORDER_SCALE_W = float(os.environ.get("PATHORDER_SCALE_W", "0.1"))
 # If "no", drop g from the f-score (GBFS instead of A*-style).
 USE_G = os.environ.get("USE_G", "yes").lower() == "yes"
 # Detect the frontier meeting as soon as both sides have GENERATED the shared
@@ -106,13 +84,6 @@ FULL_F2F = os.environ.get("FULL_F2F", "no").lower() == "yes"
 # the on-policy training solves and the CPU twin so the NN trains under the same
 # search it is evaluated in.
 ANCHOR_STRATEGY = os.environ.get("ANCHOR_STRATEGY", "temporal").lower()
-# RANK_LOSS is incompatible with FULL_F2F: under full-F2F the search scores a
-# node against the min over the WHOLE opponent frontier, but the per-step anchor
-# log records only a single anchor, so the ranking loss would train against the
-# wrong target. Fail fast rather than train a silently-mistargeted model.
-if RANK_LOSS and FULL_F2F:
-    raise SystemExit("RANK_LOSS=yes is incompatible with FULL_F2F=yes "
-                     "(single-anchor log vs full-frontier scoring). Disable one.")
 # Training device. Search always runs on a CPU twin regardless.
 TRAIN_DEVICE = os.environ.get("TRAIN_DEVICE", "cpu").lower()
 # Periodic re-mining: re-solve & re-mine 1 old puzzle every K_REMINE solves
@@ -128,12 +99,6 @@ def run_search(puzzle, nn_model=None):
     s.meet_on_generate = MEET_ON_GENERATE
     s.full_f2f = FULL_F2F
     s.anchor_strategy = ANCHOR_STRATEGY
-    # Record per-step anchors for the ranking loss — only when the "perfect"
-    # mode needs them, and only on NN solves (the blind baseline pass discards
-    # its search, so logging there is wasted work). "pathorder" needs only the
-    # reconstructed path, so it logs nothing.
-    s.log_expansions = (RANK_LOSS and RANK_MODE == "perfect"
-                        and nn_model is not None)
     t0 = time.time()
     path = s.search(max_iterations=MAX_ITERS)
     return path, s, time.time() - t0
@@ -275,14 +240,8 @@ print(f"  done in {time.time()-t0:.1f}s  mean iters={np.mean(base_iters):.1f}  "
 
 
 # ── Model(s): training model on TRAIN_DEVICE, CPU twin for search ──────────
-if RANK_LOSS:
-    _loss_desc = (f"RANKING(pathorder,scale_w={PATHORDER_SCALE_W})"
-                  if RANK_MODE == "pathorder"
-                  else f"RANKING(perfect,{'L_gbfs' if RANK_GBFS else 'L*'})")
-else:
-    _loss_desc = f"{LOSS}/{REG_LOSS}"
 print(f"\n[Online] batch={BATCH_SIZE} K={UPDATES_PER_SOLVE} warmup={WARMUP} "
-      f"buffer={BUFFER_CAP} loss={_loss_desc} use_g={USE_G} "
+      f"buffer={BUFFER_CAP} loss={LOSS} reg_loss={REG_LOSS} use_g={USE_G} "
       f"train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
 torch.manual_seed(SEED + 100)
 train_model = build_model(MODEL, MODEL_CHANNELS)
@@ -339,24 +298,7 @@ for n, p in enumerate(puzzles):
         first_saturated_n = n
 
     # Training.
-    if len(buffer) >= WARMUP and RANK_LOSS:
-        # Pure genuine ranking loss, per instance. Only solved instances yield
-        # a rankable path; unsolved ones contribute no gradient this round.
-        if path:
-            for _ in range(UPDATES_PER_SOLVE):
-                optimizer.zero_grad()
-                if RANK_MODE == "pathorder":
-                    loss = bidir_pathorder_loss(train_model, s, scale_w=PATHORDER_SCALE_W)
-                else:
-                    loss = bidir_ranking_loss(train_model, s, use_g=USE_G, gbfs=RANK_GBFS)
-                if loss is None:
-                    break
-                loss.backward()
-                optimizer.step()
-                loss_hist.append(float(loss.item()))
-                total_updates += 1
-            sync_search_model()
-    elif len(buffer) >= WARMUP:
+    if len(buffer) >= WARMUP:
         for _ in range(UPDATES_PER_SOLVE):
             samples = buffer.sample(BATCH_SIZE)
             optimizer.zero_grad()
@@ -392,10 +334,8 @@ for n, p in enumerate(puzzles):
             total_updates += 1
         sync_search_model()
 
-    # Periodic re-mining of an old puzzle with the current model. (Skipped
-    # under RANK_LOSS: the buffer isn't used for gradients there, so re-mining
-    # it would only waste a solve.)
-    if (K_REMINE > 0 and use_nn and not RANK_LOSS and first_saturated_n is not None
+    # Periodic re-mining of an old puzzle with the current model.
+    if (K_REMINE > 0 and use_nn and first_saturated_n is not None
             and (n - first_saturated_n) > 0
             and (n - first_saturated_n) % K_REMINE == 0 and seen):
         if _rng.random() < REMINE_RANDOM_FRAC and len(seen) > 1:
