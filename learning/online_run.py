@@ -112,8 +112,9 @@ BHFFA_G = os.environ.get("BHFFA_G", "yes").lower() == "yes"
 # corruption: reverse routes exist in the explored subgraph for only ~15% of
 # pairs and ~35% of those exceed j-i (mean +2.9). DIRECTED=yes: (1) mine only
 # direction-correct on-path pairs (symmetric=False) with num_random_pairs
-# doubled 2L->4L so buffer throughput is matched and the comparison isolates
-# label SEMANTICS, not dataset size; (2) drop the mirrored (goal, state)
+# doubled 2L->4L to compensate; measured per-puzzle throughput is ~2/3 of the
+# legacy symmetric setting (set-dedup + the ordered-pair space being half) —
+# a known, documented secondary confound; (2) drop the mirrored (goal, state)
 # off-path insertion (that direction's label is unknown); (3) the backward
 # frontier queries h in the direction it actually needs (s.dir_correct; see
 # search class docs). Default off pending 3-seed validation.
