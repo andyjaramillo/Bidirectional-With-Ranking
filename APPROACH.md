@@ -108,10 +108,13 @@ flipped-backward adjacency over full-state keys. Four proposals consume it.
   15.3% of the time, and 35.4% of those are mislabeled (mean err +2.9, p90 8)
   — the quasimetric asymmetry is real, gating OPEN the direction-correct-labels
   proposal (see Wave 3 prerequisite).
-- **c. BHFFA-correct scoring. ⏳ 3-seed run in progress (2026-07-02).**
-  Add `+ g_b(d*)` to `f` (bhffa_g flag). One line, zero cost, retires a real
-  theoretical objection; possibly a wash (lazy re-eval may absorb it) — either
-  outcome is knowledge. Blind spot-check: mean −3.4%, median mixed.
+- **c. BHFFA-correct scoring. ✅ DONE, ADOPTED (2026-07-03).**
+  Add `+ g_b(d*)` to `f` (bhffa_g flag). *3-seed result: learned median better
+  on 3/3 seeds (avg 184.5 → 173.0, −6.2%); within-model the eval-time term
+  improves mean AND solve rate on 3/3 seeds (fixes stale-entry mis-ordering on
+  the hard tail). Blind h gets worse under the term — only the on-policy net
+  can exploit the corrected score. Defaults flipped. Current reference:
+  avg 199.3 / 173.0 / 584. **Wave 1 complete.***
 
 **Wave 2 — give `h` local distance structure (small, additive to the loss,
 following the proven pattern "add structure on top of the calibrated loss"):**

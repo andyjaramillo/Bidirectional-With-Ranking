@@ -199,9 +199,12 @@ class BidirectionalF2FSearch:
         # bhffa_g=True restores the term. Constant within an expansion round
         # (one anchor per round), so survivor ordering is unchanged — the
         # effect is purely on cross-round comparability of stale heap entries.
-        # Anchor mode only (full_f2f scorers unaffected). Default off pending
-        # 3-seed validation.
-        self.bhffa_g: bool = False
+        # Anchor mode only (full_f2f scorers unaffected). DEFAULT on since
+        # 3-seed validation: vs the pre-1c reference, learned median better on
+        # 3/3 seeds (avg 184.5 -> 173.0); within-model, eval-time term improves
+        # mean AND solve rate on 3/3 seeds. (Blind/analytic h cannot exploit
+        # the corrected score — the on-policy net adapts to it.)
+        self.bhffa_g: bool = True
 
     # ──────────────────────────────────────────────────────────────────
     # Helpers

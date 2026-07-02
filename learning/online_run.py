@@ -103,8 +103,9 @@ SEAM_REPAIR = os.environ.get("SEAM_REPAIR", "yes").lower() == "yes"
 # BHFFA-complete scoring (APPROACH.md Wave 1c): f(n) = g(n) + h(n,d*) + g_opp(d*)
 # — restores the classical front-to-front term our TTBS score drops, putting
 # heap entries scored against anchors of different depths on one scale.
-# Default off pending 3-seed validation.
-BHFFA_G = os.environ.get("BHFFA_G", "no").lower() == "yes"
+# DEFAULT on since 3-seed validation (learned median better 3/3 seeds, avg
+# 184.5 -> 173.0; eval-time term improves mean + solve rate 3/3 within-model).
+BHFFA_G = os.environ.get("BHFFA_G", "yes").lower() == "yes"
 # Full front-to-front: score nodes against the WHOLE opponent open frontier
 # (min over all live opponent open nodes) instead of the single temporal anchor.
 # In principle slow; applies to BOTH the training solves and the CPU twin so the

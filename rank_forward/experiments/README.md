@@ -149,6 +149,38 @@ class; `MEET_ON_GENERATE`/`SEAM_REPAIR` env default yes); the pre-Wave-1a
 reference is recovered with `MEET_ON_GENERATE=no SEAM_REPAIR=no`. NOTE: the
 blind training-baseline pass now reads 1367/561 (was 1520/658).
 
+## Wave 1c: BHFFA-complete scoring — ADOPTED AS DEFAULT; Wave 1b closed
+
+**Wave 1b (exact on-path relabeling) is closed as SUBSUMED by Wave 1a**: a
+subpath of a shortest path is a shortest path, so the repaired path's `|i-j|`
+labels already ARE exact union-graph distances. Diagnostic over 118 puzzles:
+62,266 on-path pairs, **zero slack**; legacy paths had slack on only 3.1% of
+pairs. The residual label problem is **directional**: reverse pairs (half of
+training data via `symmetric=True`, labeled `j-i`) have a finite reverse route
+in the explored subgraph only 15.3% of the time, and 35.4% of those are
+mislabeled (mean err +2.9, p90 8) — Sokoban's quasimetric asymmetry is real.
+This opens the direction-correct-labels gate (APPROACH.md Wave 3 prerequisite).
+
+**Wave 1c** restores the classical BHFFA front-to-front term our TTBS score
+dropped: `f(n) = g(n) + h(n,d*) + g_opp(d*)` (`bhffa_g`). Cross-round heap
+comparability is the only thing it changes (constant within a round). Driver:
+`bhffa_run.py`. **3 seeds, trained+evaled with the term, held-out 200:**
+
+| seed | pre-1c reference | + BHFFA | within-model on-vs-off |
+|---|---|---|---|
+| 0 | 198 / 207.5 / 683 | 199 / 190 / 684 | mean 684<691, solved 199>198 |
+| 1 | 200 / 159 / 539 | 199 / 151 / 508 | mean 508<577, solved 199>197 |
+| 2 | 199 / 187 / 550 | 200 / 178 / 561 | mean 561<771, solved 200>199 |
+| **avg** | 199.0 / 184.5 / 591 | **199.3 / 173.0 / 584** | |
+
+Verdict: **median better on 3/3 seeds (avg −6.2%)**; within-model the eval-time
+term improves **mean and solve rate on 3/3 seeds** (it fixes the stale-entry
+mis-ordering on the hard tail). Blind/analytic h gets *worse* under the term
+(597 vs 466 median) — a weak h cannot exploit the corrected score; the
+on-policy net adapts to it. **Defaults flipped** (`bhffa_g=True`, `BHFFA_G`
+default yes); `BHFFA_G=no` recovers the pre-1c reference. Current reference:
+**avg 199.3 / 173.0 / 584**. Wave 1 of APPROACH.md is complete.
+
 ## Fairness notes (read before trusting the numbers)
 
 **The shared goal includes the player position.** The bidirectional method's goal

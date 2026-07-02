@@ -20,8 +20,10 @@
 - **Meeting: `meet_on_generate=True` + `seam_repair=True`** (Wave 1a, default since its
   3-seed validation) — earliest detection + BFS-shortest path over the explored subgraph;
   `MEET_ON_GENERATE=no SEAM_REPAIR=no` recovers the legacy reference.
+- **Scoring: `bhffa_g=True`** (Wave 1c, default since its 3-seed validation) —
+  BHFFA-complete `f(n) = g(n) + h(n,d*) + g_opp(d*)`; `BHFFA_G=no` recovers pre-1c.
 - Stored 3-seed reference numbers live in `rank_forward/experiments/README.md`
-  (current reference: avg 199.0 solved / 184.5 median / 591 mean on the held-out 200).
+  (current reference: avg 199.3 solved / 173.0 median / 584 mean on the held-out 200).
 
 ## Data
 - Default benchmark is the **solvable-only** dataset `data/solvable10_3box.txt`
