@@ -206,6 +206,24 @@ class BidirectionalF2FSearch:
         # the corrected score — the on-policy net adapts to it.)
         self.bhffa_g: bool = True
 
+        # ── Direction-correct NN queries (quasimetric fix, APPROACH.md) ─
+        # State-space distance under irreversible moves is a QUASIMETRIC:
+        # d(a->b) != d(b->a). Convention: the learned h(a, target, b) estimates
+        # the FORWARD-dynamics distance d(a -> b), trained on forward-frame
+        # boards. A backward node's remaining work is the forward distance
+        # from the (forward) anchor to the node: a backward edge u->v is the
+        # forward edge flip(v)->flip(u), so a backward path node->anchor of
+        # length L IS the forward path anchor->node of length L. dir_correct=
+        # True therefore makes the BACKWARD side query
+        #     h(anchor_board_fwd, forward_target, flip(node))
+        # — arguments swapped, everything in the forward frame, matching the
+        # training convention exactly (legacy queries pass backward-frame
+        # boards the buffer never contains). Forward-side queries unchanged.
+        # NN scorers in anchor mode only (blind/analytic h is a symmetric box
+        # metric; full_f2f and _pair_h untouched — non-default paths).
+        # Default off pending 3-seed validation.
+        self.dir_correct: bool = False
+
     # ──────────────────────────────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────────────────────────────
@@ -267,19 +285,42 @@ class BidirectionalF2FSearch:
         cache[ck] = other
         return other
 
+    def _dir_source(self, opp_anchor_hash: Optional[str]):
+        """DIRECTED backward-side query source: the forward anchor's board in
+        the FORWARD frame (plain decode, no flip; None -> the forward seed).
+        Cached per anchor — shared by lazy re-eval and survivor batches."""
+        cache = getattr(self, "_dirsrc_cache", None)
+        if cache is None:
+            cache = {}
+            self._dirsrc_cache = cache
+        if opp_anchor_hash in cache:
+            return cache[opp_anchor_hash]
+        board = (self.puzzle if opp_anchor_hash is None
+                 else self.forward_game.decodeMap(opp_anchor_hash))
+        cache[opp_anchor_hash] = board
+        return board
+
     def _f_score_nn(self, node_hash: str, g: int, opp_anchor_hash: Optional[str],
                  active_game: SokobanGame, opp_game: SokobanGame,
                  opp_g: float = 0.0) -> float:
-        """f(s) = g(s) + max(0, h_nn(s, anchor)) [+ g_opp(anchor) iff bhffa_g].
+        """f(s) = g(s) + max(0, h_nn) [+ g_opp(anchor) iff bhffa_g].
 
-        h_nn is the learned model's predicted distance from the node to the
-        opposite frontier's anchor (flipped into the active frame).
+        h_nn is the learned pairwise distance estimate. Legacy: h_nn(node,
+        anchor flipped into the active frame). dir_correct backward side:
+        h_nn(anchor_fwd, flip(node)) — the forward-dynamics distance the
+        backward node actually needs (see the dir_correct field docs).
         """
         import torch
         node_map = active_game.decodeMap(node_hash)
-        other = self._anchor_other(opp_anchor_hash, active_game, opp_game)
-        with torch.no_grad():
-            h_nn = float(self.nn(node_map, active_game.target, other).item())
+        if self.dir_correct and active_game is self.backward_game:
+            src = self._dir_source(opp_anchor_hash)
+            node_f = self.forward_game.flipGame(node_map)
+            with torch.no_grad():
+                h_nn = float(self.nn(src, self.forward_game.target, node_f).item())
+        else:
+            other = self._anchor_other(opp_anchor_hash, active_game, opp_game)
+            with torch.no_grad():
+                h_nn = float(self.nn(node_map, active_game.target, other).item())
         h = max(0.0, h_nn)
         return float(((g + h) if self.use_g_in_f else h) + opp_g)
 
@@ -299,11 +340,20 @@ class BidirectionalF2FSearch:
         import torch
         if not node_maps:
             return []
-        other = self._anchor_other(opp_anchor_hash, active_game, opp_game)
         n = len(node_maps)
-        with torch.no_grad():
-            h = self.nn.forward_batch(
-                node_maps, [active_game.target] * n, [other] * n).clamp_min(0.0)
+        if self.dir_correct and active_game is self.backward_game:
+            # DIRECTED backward side: swapped arguments, forward frame.
+            src = self._dir_source(opp_anchor_hash)
+            others = [self.forward_game.flipGame(nm) for nm in node_maps]
+            with torch.no_grad():
+                h = self.nn.forward_batch(
+                    [src] * n, [self.forward_game.target] * n,
+                    others).clamp_min(0.0)
+        else:
+            other = self._anchor_other(opp_anchor_hash, active_game, opp_game)
+            with torch.no_grad():
+                h = self.nn.forward_batch(
+                    node_maps, [active_game.target] * n, [other] * n).clamp_min(0.0)
         if self.use_g_in_f:
             h = h + torch.tensor(g_list, dtype=h.dtype, device=h.device)
         if opp_g:

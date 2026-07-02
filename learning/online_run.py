@@ -106,6 +106,18 @@ SEAM_REPAIR = os.environ.get("SEAM_REPAIR", "yes").lower() == "yes"
 # DEFAULT on since 3-seed validation (learned median better 3/3 seeds, avg
 # 184.5 -> 173.0; eval-time term improves mean + solve rate 3/3 within-model).
 BHFFA_G = os.environ.get("BHFFA_G", "yes").lower() == "yes"
+# Direction-correct labels & queries (quasimetric fix, APPROACH.md).
+# State-space distance under irreversible moves is asymmetric; symmetric=True
+# pair mining labels (s_j, s_i) with the FORWARD distance j-i — measured label
+# corruption: reverse routes exist in the explored subgraph for only ~15% of
+# pairs and ~35% of those exceed j-i (mean +2.9). DIRECTED=yes: (1) mine only
+# direction-correct on-path pairs (symmetric=False) with num_random_pairs
+# doubled 2L->4L so buffer throughput is matched and the comparison isolates
+# label SEMANTICS, not dataset size; (2) drop the mirrored (goal, state)
+# off-path insertion (that direction's label is unknown); (3) the backward
+# frontier queries h in the direction it actually needs (s.dir_correct; see
+# search class docs). Default off pending 3-seed validation.
+DIRECTED = os.environ.get("DIRECTED", "no").lower() == "yes"
 # Full front-to-front: score nodes against the WHOLE opponent open frontier
 # (min over all live opponent open nodes) instead of the single temporal anchor.
 # In principle slow; applies to BOTH the training solves and the CPU twin so the
@@ -131,6 +143,7 @@ def run_search(puzzle, nn_model=None):
     s.meet_on_generate = MEET_ON_GENERATE
     s.seam_repair = SEAM_REPAIR
     s.bhffa_g = BHFFA_G
+    s.dir_correct = DIRECTED
     s.full_f2f = FULL_F2F
     s.anchor_strategy = ANCHOR_STRATEGY
     t0 = time.time()
@@ -252,10 +265,13 @@ def solve_and_collect(puzzle, puzzle_id, nn_model, buffer, rng):
         return path, s, dt, n_pairs, n_off
 
     decoded = [s.forward_game.decodeMap(h) for h in path]
+    # DIRECTED: direction-correct pairs only (no reverse duplicates whose
+    # labels would be wrong under asymmetric dynamics), random-pair budget
+    # doubled so buffer throughput matches the symmetric legacy setting.
     n_pairs = buffer.add_pairs_from_path(
         decoded, s.forward_game.target,
-        num_random_pairs=2 * len(decoded),
-        symmetric=True, include_endpoints=True,
+        num_random_pairs=(4 if DIRECTED else 2) * len(decoded),
+        symmetric=not DIRECTED, include_endpoints=True,
         puzzle_id=puzzle_id, rng=rng,
     )
 
@@ -275,8 +291,12 @@ def solve_and_collect(puzzle, puzzle_id, nn_model, buffer, rng):
                     cand.append((vb, d))
             for vb, d in rng.sample(cand, min(OFF_PATH_PER_PUZZLE, len(cand))):
                 buffer.add(vb, tgt, goal_board, d, puzzle_id)
-                buffer.add(goal_board, tgt, vb, d, puzzle_id)
-                n_off += 2
+                n_off += 1
+                if not DIRECTED:
+                    # Mirrored insertion labels d(goal->state) with the
+                    # state->goal distance — wrong under asymmetric dynamics.
+                    buffer.add(goal_board, tgt, vb, d, puzzle_id)
+                    n_off += 1
     return path, s, dt, n_pairs, n_off
 
 
@@ -307,6 +327,7 @@ print(f"  done in {time.time()-t0:.1f}s  mean iters={np.mean(base_iters):.1f}  "
 # ── Model(s): training model on TRAIN_DEVICE, CPU twin for search ──────────
 _pr_tag = (f" +PATH_RANK(w={PATH_RANK_W},pairs={PATH_RANK_PAIRS})"
            if PATH_RANK else "")
+_pr_tag += " DIRECTED" if DIRECTED else ""
 print(f"\n[Online] batch={BATCH_SIZE} K={UPDATES_PER_SOLVE} warmup={WARMUP} "
       f"buffer={BUFFER_CAP} loss={LOSS} reg_loss={REG_LOSS}{_pr_tag} "
       f"use_g={USE_G} train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
