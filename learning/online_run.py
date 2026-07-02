@@ -68,6 +68,20 @@ LOSS = os.environ.get("LOSS", "both").lower()
 # Regression-term flavor for "mse"/"both": "mae" (L1) or "mse" (L2).
 REG_LOSS = os.environ.get("REG_LOSS", "mse").lower()
 RANK_MARGIN = float(os.environ.get("RANK_MARGIN", "1.0"))
+# Within-path pairs-of-pairs margin (additive optimization experiment): for two
+# pairs of nodes on the SAME fresh solution path, (x,y)=(p_i,p_j) and
+# (x',y')=(p_i',p_j'), enforce the margin-ranking constraint
+#     h(x,y) + RANK_MARGIN <= h(x',y')   whenever |i-j| < |i'-j'|.
+# The buffer margin term above already ranks pairs-of-pairs, but its random
+# batch pairs are almost always CROSS-puzzle; the search's open list only ever
+# compares nodes of the SAME instance, so within-instance ordering is the
+# operationally relevant constraint. Added ON TOP of the (untouched) MSE+margin
+# loss, which keeps h's scale pinned. Per update, PATH_RANK_PAIRS on-path pairs
+# are sampled and ALL comparable combinations among them are penalised (dense:
+# one h-batch of size PATH_RANK_PAIRS yields ~PAIRS^2/2 comparisons).
+PATH_RANK = os.environ.get("PATH_RANK", "no").lower() == "yes"
+PATH_RANK_PAIRS = int(os.environ.get("PATH_RANK_PAIRS", "32"))
+PATH_RANK_W = float(os.environ.get("PATH_RANK_W", "0.5"))
 # If "no", drop g from the f-score (GBFS instead of A*-style).
 USE_G = os.environ.get("USE_G", "yes").lower() == "yes"
 # Detect the frontier meeting as soon as both sides have GENERATED the shared
@@ -102,6 +116,37 @@ def run_search(puzzle, nn_model=None):
     t0 = time.time()
     path = s.search(max_iterations=MAX_ITERS)
     return path, s, time.time() - t0
+
+
+def path_pair_rank_loss(model, path_boards, target, rng, n_pairs, margin):
+    """Within-path pairs-of-pairs margin term (see PATH_RANK above).
+
+    Samples ``n_pairs`` on-path pairs (p_i, p_j), i<j, scores each with ONE
+    batched h-query h(p_i, target, p_j) — the same query convention as the
+    buffer pairs from ``add_pairs_from_path`` — and penalises every comparable
+    combination: mean over {(p,q): d_p < d_q} of relu(margin + h_p - h_q),
+    i.e. the closer pair must score at least ``margin`` below the farther one
+    (identical hinge form to the buffer margin_ranking_loss). |i-j| labels are
+    exact distances ALONG the satisficing path, the same label semantics the
+    buffer already trains on. Returns None if the path is too short or no
+    comparable combination exists in the sample.
+    """
+    L = len(path_boards)
+    if L < 3:
+        return None
+    all_pairs = [(i, j) for i in range(L) for j in range(i + 1, L)]
+    sel = rng.sample(all_pairs, n_pairs) if len(all_pairs) > n_pairs else all_pairs
+    h = model.forward_batch([path_boards[i] for i, _ in sel],
+                            [target] * len(sel),
+                            [path_boards[j] for _, j in sel])
+    if h.ndim == 0:
+        h = h.unsqueeze(0)
+    d = torch.tensor([float(j - i) for i, j in sel], dtype=h.dtype, device=h.device)
+    closer = d.unsqueeze(1) < d.unsqueeze(0)      # [p][q] = d_p < d_q
+    if not bool(closer.any()):
+        return None
+    viol = torch.relu(margin + h.unsqueeze(1) - h.unsqueeze(0))  # [p][q] = m+h_p-h_q
+    return viol[closer].mean()
 
 
 def off_path_distance_to_goal(s):
@@ -240,9 +285,11 @@ print(f"  done in {time.time()-t0:.1f}s  mean iters={np.mean(base_iters):.1f}  "
 
 
 # ── Model(s): training model on TRAIN_DEVICE, CPU twin for search ──────────
+_pr_tag = (f" +PATH_RANK(w={PATH_RANK_W},pairs={PATH_RANK_PAIRS})"
+           if PATH_RANK else "")
 print(f"\n[Online] batch={BATCH_SIZE} K={UPDATES_PER_SOLVE} warmup={WARMUP} "
-      f"buffer={BUFFER_CAP} loss={LOSS} reg_loss={REG_LOSS} use_g={USE_G} "
-      f"train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
+      f"buffer={BUFFER_CAP} loss={LOSS} reg_loss={REG_LOSS}{_pr_tag} "
+      f"use_g={USE_G} train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
 torch.manual_seed(SEED + 100)
 train_model = build_model(MODEL, MODEL_CHANNELS)
 if TRAIN_DEVICE != "cpu":
@@ -299,6 +346,12 @@ for n, p in enumerate(puzzles):
 
     # Training.
     if len(buffer) >= WARMUP:
+        # Within-path pairs-of-pairs margin: decode the fresh path once per
+        # solve; each update below samples its own subset of pairs from it.
+        path_boards = None
+        if PATH_RANK and path and len(path) >= 3:
+            path_boards = [s.forward_game.decodeMap(h) for h in path]
+            pr_target = s.forward_game.target
         for _ in range(UPDATES_PER_SOLVE):
             samples = buffer.sample(BATCH_SIZE)
             optimizer.zero_grad()
@@ -327,6 +380,13 @@ for n, p in enumerate(puzzles):
                 loss = rank_loss
             else:
                 loss = 0.5 * mse + 0.5 * rank_loss
+
+            # Additive within-path pairs-of-pairs margin (PATH_RANK).
+            if path_boards is not None:
+                pr = path_pair_rank_loss(train_model, path_boards, pr_target,
+                                         _rng, PATH_RANK_PAIRS, RANK_MARGIN)
+                if pr is not None:
+                    loss = loss + PATH_RANK_W * pr
 
             loss.backward()
             optimizer.step()

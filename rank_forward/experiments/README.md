@@ -21,6 +21,7 @@ Optimal training trajectories are solved once and cached under
 | `loss_sweep.py` | trains all five losses (L\*, L_gbfs, L2, L_rt, Bellman), evaluates each in A\* and GBFS vs the blind baseline | `PYTHONPATH=. python rank_forward/experiments/loss_sweep.py` |
 | `forward_fullgoal.py` | forward-only (L_gbfs + L\*) under the full goal — the quick way to the corrected forward numbers without the bidirectional run | `PYTHONPATH=. python rank_forward/experiments/forward_fullgoal.py` |
 | `anchor_strategy_run.py` | one anchor-selection strategy (`temporal`/`top_of_open`/`closest_anchor`) trained on-policy + evaluated on the held-out tail — the anchor-search study | `N_TOTAL=1800 ANCHOR_STRATEGY=top_of_open NEVAL=200 PYTHONPATH=. python rank_forward/experiments/anchor_strategy_run.py` |
+| `path_rank_run.py` | default MSE+margin **plus the within-path pairs-of-pairs margin** (`PATH_RANK=yes`): rank h over pairs of same-path node pairs by subpath length — the within-INSTANCE ordering the search's open list actually uses (buffer margin pairs are almost always cross-puzzle) | `PATH_RANK=yes N_TOTAL=1800 NEVAL=200 PYTHONPATH=. python rank_forward/experiments/path_rank_run.py` |
 
 ### Common env knobs
 `N_TOTAL`/`H2H_NTRAIN`+`H2H_NEVAL` (split sizes), `STEPS`/`H2H_FWD_STEPS`
