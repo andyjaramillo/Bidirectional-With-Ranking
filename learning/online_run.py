@@ -91,6 +91,13 @@ USE_G = os.environ.get("USE_G", "yes").lower() == "yes"
 # state (default), instead of only when one side has CLOSED it — avoids ~11%
 # of node expansions wasted past a valid seam. "no" restores legacy behavior.
 MEET_ON_GENERATE = os.environ.get("MEET_ON_GENERATE", "no").lower() == "yes"
+# Post-hoc seam/path repair (APPROACH.md Wave 1a): return the BFS-shortest
+# start->goal path over the recorded union graph instead of the parent-pointer
+# splice — never longer, optimal within the explored subgraph. Decouples
+# meeting-detection earliness from path quality (the principled companion of
+# MEET_ON_GENERATE) and tightens |i-j| path labels for training. Default off
+# until 3-seed validation.
+SEAM_REPAIR = os.environ.get("SEAM_REPAIR", "no").lower() == "yes"
 # Full front-to-front: score nodes against the WHOLE opponent open frontier
 # (min over all live opponent open nodes) instead of the single temporal anchor.
 # In principle slow; applies to BOTH the training solves and the CPU twin so the
@@ -114,6 +121,7 @@ def run_search(puzzle, nn_model=None):
     s = BidirectionalF2FSearch(puzzle, nn_model)
     s.use_g_in_f = USE_G
     s.meet_on_generate = MEET_ON_GENERATE
+    s.seam_repair = SEAM_REPAIR
     s.full_f2f = FULL_F2F
     s.anchor_strategy = ANCHOR_STRATEGY
     t0 = time.time()

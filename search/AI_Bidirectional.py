@@ -1,5 +1,6 @@
 import numpy as np
 import heapq
+from collections import deque
 from typing import Tuple, Dict, List, Optional, Set
 from game.SokobanGame import SokobanGame
 
@@ -104,12 +105,23 @@ class BidirectionalF2FSearch:
         # LEGACY (default): the seam fires only when a freshly generated
         # successor matches the opposite CLOSED set. meet_on_generate=True fires
         # as soon as both frontiers have GENERATED the shared state — ~11% fewer
-        # expansions, but can pick a slightly suboptimal seam. Kept available;
-        # default reverted to legacy to keep the focus on anchor selection
-        # (full front-to-front) as the next thing to study.
+        # expansions, but the first generated coincidence can pick a suboptimal
+        # seam. Combine with seam_repair (below), which removes that objection.
         self.meet_on_generate: bool = False
         self.fkey_gen_f: Dict[str, str] = {}   # full-key -> fwd hash, all generated
         self.fkey_gen_b: Dict[str, str] = {}   # full-key -> bwd hash, all generated
+
+        # ── Optional: post-hoc seam/path repair (APPROACH.md Wave 1a) ───
+        # When True, search() returns the BFS-shortest start->goal path over
+        # the FULL recorded transition graph (edges_f + flipped edges_b, keyed
+        # by full-state key) instead of the parent-pointer splice. The
+        # parent-pointer path is a witness walk in that graph, so the repaired
+        # plan is never longer — it is provably the shortest plan using only
+        # explored transitions. This makes ALL meeting-detection rules
+        # quality-equivalent (detection earliness is decoupled from path
+        # quality), so it is the principled companion of meet_on_generate.
+        # It also tightens the |i-j| path-distance training labels downstream.
+        self.seam_repair: bool = False
 
         # ── TTBS anchor: most recently expanded node on each side ──────
         self.anchor_f: Optional[str] = None
@@ -763,6 +775,99 @@ class BidirectionalF2FSearch:
         return path_f + path_b
 
     # ──────────────────────────────────────────────────────────────────
+    # Post-hoc seam/path repair
+    # ──────────────────────────────────────────────────────────────────
+
+    def refine_path(self) -> Optional[List[str]]:
+        """Shortest start → goal plan over the EXPLORED subgraph.
+
+        Builds the forward-direction union graph over full-state keys from
+        every transition the search recorded — edges_f as-is, plus edges_b
+        flipped (a backward move u→v is the forward move flip(v)→flip(u)) —
+        and BFS-extracts the shortest start→goal path. The parent-pointer
+        path of reconstruct_path() is a witness walk in this graph, so the
+        result is never longer, and it is optimal among plans that use only
+        explored transitions. Returns forward-frame encoded maps (same format
+        as reconstruct_path), or None if no meeting/route exists (callers
+        fall back to the parent-pointer path).
+        """
+        if self.meeting_fwd is None:
+            return None
+        fg, bg = self.forward_game, self.backward_game
+
+        adj: Dict[bytes, Dict[bytes, None]] = {}
+        board_of: Dict[bytes, np.ndarray] = {}
+        cache_f: Dict[str, Tuple[bytes, np.ndarray]] = {}
+        cache_b: Dict[str, Tuple[bytes, np.ndarray]] = {}
+
+        def key_fwd(h):
+            r = cache_f.get(h)
+            if r is None:
+                b = fg.decodeMap(h)
+                r = (self._full_key(b), b)
+                cache_f[h] = r
+            return r
+
+        def key_bwd(h_b):
+            r = cache_b.get(h_b)
+            if r is None:
+                b = fg.flipGame(bg.decodeMap(h_b))
+                r = (self._full_key(b), b)
+                cache_b[h_b] = r
+            return r
+
+        # Forward-frame boards are canonical for re-encoding; flipped backward
+        # boards fill keys the forward side never touched. Successor sets are
+        # iterated SORTED and the adjacency uses insertion-ordered dicts so the
+        # BFS tie-breaking (hence the returned path) is deterministic — raw set
+        # iteration order is hash-randomized per process.
+        for u, vs in self.edges_f.items():
+            ku, bu = key_fwd(u)
+            board_of[ku] = bu
+            out = adj.setdefault(ku, {})
+            for v in sorted(vs):
+                kv, bv = key_fwd(v)
+                board_of[kv] = bv
+                out[kv] = None
+        for u_b, vs_b in self.edges_b.items():
+            ku, bu = key_bwd(u_b)
+            board_of.setdefault(ku, bu)
+            for v_b in sorted(vs_b):
+                kv, bv = key_bwd(v_b)
+                board_of.setdefault(kv, bv)
+                adj.setdefault(kv, {})[ku] = None   # flip(v)→flip(u)
+
+        start_fk = self._full_key(self.puzzle)
+        board_of[start_fk] = self.puzzle
+        bwd_root = next((v for v, p in self.parent_b.items() if p is None), None)
+        if bwd_root is None:
+            return None
+        goal_fk, goal_board = key_bwd(bwd_root)
+        board_of.setdefault(goal_fk, goal_board)
+
+        # BFS start → goal with parent pointers.
+        parent: Dict[bytes, Optional[bytes]] = {start_fk: None}
+        dq = deque([start_fk])
+        while dq:
+            u = dq.popleft()
+            if u == goal_fk:
+                break
+            for v in adj.get(u, ()):
+                if v not in parent:
+                    parent[v] = u
+                    dq.append(v)
+        if goal_fk not in parent:
+            return None
+
+        keys: List[bytes] = []
+        cur: Optional[bytes] = goal_fk
+        while cur is not None:
+            keys.append(cur)
+            cur = parent[cur]
+        keys.reverse()
+        return [fg.encodeMap(board_of[k]) for k in keys]
+
+    # ──────────────────────────────────────────────────────────────────
     # Public search interface
     # ──────────────────────────────────────────────────────────────────
 
@@ -783,5 +888,9 @@ class BidirectionalF2FSearch:
                 break
             found, path = self.step()
             if found:
+                if self.seam_repair:
+                    refined = self.refine_path()
+                    if refined:
+                        return refined
                 return path
         return None
