@@ -115,6 +115,40 @@ bidirectional configuration is MSE+margin+PATH_RANK; the table above is the
 adoption evidence, and `PATH_RANK=no` recovers the old baseline. Knobs
 `PATH_RANK_W` (0.5) and `PATH_RANK_PAIRS` (32) are untuned first guesses.
 
+## Wave 1a: meet-on-generate + seam repair — ADOPTED AS DEFAULT
+
+`refine_path()` returns the BFS-shortest start→goal plan over the FULL recorded
+transition graph (`edges_f` + flipped `edges_b`) instead of the parent-pointer
+splice — provably the shortest plan using only explored transitions. This makes
+all meeting-detection rules quality-equivalent, so the earliest detection
+(`meet_on_generate`) becomes safe: earliness and path quality are decoupled.
+(This also resolves/subsumes the 2026-06-22 "principled meeting" seam-rule
+idea, whose goal was exactly this trade-off.) Driver: `seam_repair_run.py`
+(4 arms: {blind, learned} × {new, legacy}, expansions AND plan lengths).
+
+**3 seeds, trained meetgen+repair, held-out 200 (solved/median/mean):**
+
+| seed | legacy reference (PATH_RANK) | new config | plan len new vs legacy* |
+|---|---|---|---|
+| 0 | 199 / 237 / 669 | 198 / 207.5 / 683 | 35.91 vs 36.34 |
+| 1 | 196 / 168 / 540 | **200** / 159 / 539 | 36.56 vs 37.18 |
+| 2 | 197 / 184 / 615 | 199 / 187 / 550 | 36.16 vs 36.64 |
+| **avg** | 197.3 / 196 / 608 | **199.0 / 184.5 / 591** | shorter 3/3 |
+
+*same trained model evaluated under both configs.
+
+Verdict: **+1.7 solved (seed 1 = 200/200, first perfect score), −6% median,
+−3% mean — and repaired plans are SHORTER than legacy's on all seeds** despite
+stopping earlier (the quality objection that originally forced the
+meet-on-generate revert is reversed, not just neutralized). Within-model,
+new detection improves the median on 3/3 seeds; the one apparent mean
+regression (seed 0) is a solved-set composition effect (+2 hard instances
+solved). Blind: +2 solved, −15% median (deterministic).
+**Defaults flipped** (`meet_on_generate=True`, `seam_repair=True` in the search
+class; `MEET_ON_GENERATE`/`SEAM_REPAIR` env default yes); the pre-Wave-1a
+reference is recovered with `MEET_ON_GENERATE=no SEAM_REPAIR=no`. NOTE: the
+blind training-baseline pass now reads 1367/561 (was 1520/658).
+
 ## Fairness notes (read before trusting the numbers)
 
 **The shared goal includes the player position.** The bidirectional method's goal

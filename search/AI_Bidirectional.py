@@ -101,17 +101,18 @@ class BidirectionalF2FSearch:
         self.fkey_to_hash_f: Dict[str, str] = {}
         self.fkey_to_hash_b: Dict[str, str] = {}
 
-        # ── Optional: meet on GENERATION instead of on closing ─────────
-        # LEGACY (default): the seam fires only when a freshly generated
-        # successor matches the opposite CLOSED set. meet_on_generate=True fires
-        # as soon as both frontiers have GENERATED the shared state — ~11% fewer
-        # expansions, but the first generated coincidence can pick a suboptimal
-        # seam. Combine with seam_repair (below), which removes that objection.
-        self.meet_on_generate: bool = False
+        # ── Meeting detection: on GENERATION (default) vs on closing ───
+        # meet_on_generate=True (DEFAULT since Wave 1a 3-seed validation):
+        # the seam fires as soon as both frontiers have GENERATED the shared
+        # full state — earliest possible detection, −15% median expansions
+        # blind. False = legacy: fire only when a generated successor matches
+        # the opposite CLOSED set. The early seam's path-quality objection is
+        # removed by seam_repair (below).
+        self.meet_on_generate: bool = True
         self.fkey_gen_f: Dict[str, str] = {}   # full-key -> fwd hash, all generated
         self.fkey_gen_b: Dict[str, str] = {}   # full-key -> bwd hash, all generated
 
-        # ── Optional: post-hoc seam/path repair (APPROACH.md Wave 1a) ───
+        # ── Post-hoc seam/path repair (APPROACH.md Wave 1a; DEFAULT on) ─
         # When True, search() returns the BFS-shortest start->goal path over
         # the FULL recorded transition graph (edges_f + flipped edges_b, keyed
         # by full-state key) instead of the parent-pointer splice. The
@@ -121,7 +122,10 @@ class BidirectionalF2FSearch:
         # quality-equivalent (detection earliness is decoupled from path
         # quality), so it is the principled companion of meet_on_generate.
         # It also tightens the |i-j| path-distance training labels downstream.
-        self.seam_repair: bool = False
+        # 3-seed validation (with meet_on_generate): repaired plans SHORTER
+        # than legacy's on all seeds; held-out avg 199.0/184.5/591 vs the
+        # legacy reference 197.3/196/608.
+        self.seam_repair: bool = True
 
         # ── TTBS anchor: most recently expanded node on each side ──────
         self.anchor_f: Optional[str] = None

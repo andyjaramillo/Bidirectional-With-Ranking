@@ -88,16 +88,18 @@ PATH_RANK_W = float(os.environ.get("PATH_RANK_W", "0.5"))
 # If "no", drop g from the f-score (GBFS instead of A*-style).
 USE_G = os.environ.get("USE_G", "yes").lower() == "yes"
 # Detect the frontier meeting as soon as both sides have GENERATED the shared
-# state (default), instead of only when one side has CLOSED it — avoids ~11%
-# of node expansions wasted past a valid seam. "no" restores legacy behavior.
-MEET_ON_GENERATE = os.environ.get("MEET_ON_GENERATE", "no").lower() == "yes"
-# Post-hoc seam/path repair (APPROACH.md Wave 1a): return the BFS-shortest
-# start->goal path over the recorded union graph instead of the parent-pointer
-# splice — never longer, optimal within the explored subgraph. Decouples
-# meeting-detection earliness from path quality (the principled companion of
-# MEET_ON_GENERATE) and tightens |i-j| path labels for training. Default off
-# until 3-seed validation.
-SEAM_REPAIR = os.environ.get("SEAM_REPAIR", "no").lower() == "yes"
+# state (DEFAULT since Wave 1a validation) instead of only when one side has
+# CLOSED it — earliest detection, −15% median blind expansions. "no" restores
+# legacy meet-on-closed.
+MEET_ON_GENERATE = os.environ.get("MEET_ON_GENERATE", "yes").lower() == "yes"
+# Post-hoc seam/path repair (APPROACH.md Wave 1a; DEFAULT on): return the
+# BFS-shortest start->goal path over the recorded union graph instead of the
+# parent-pointer splice — never longer, optimal within the explored subgraph.
+# Decouples meeting-detection earliness from path quality (the principled
+# companion of MEET_ON_GENERATE) and tightens |i-j| path labels for training.
+# 3-seed validated: held-out avg 199.0/184.5/591 vs legacy 197.3/196/608, with
+# SHORTER plans than legacy on all seeds.
+SEAM_REPAIR = os.environ.get("SEAM_REPAIR", "yes").lower() == "yes"
 # Full front-to-front: score nodes against the WHOLE opponent open frontier
 # (min over all live opponent open nodes) instead of the single temporal anchor.
 # In principle slow; applies to BOTH the training solves and the CPU twin so the

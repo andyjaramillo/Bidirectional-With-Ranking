@@ -88,15 +88,15 @@ flipped-backward adjacency over full-state keys. Four proposals consume it.
   have finite explored-subgraph distance → gates Wave 2e.
 
 **Wave 1 — bank the certain wins (all small):**
-- **a. Seam repair + meet-on-generate.** Detect the meeting at *generation*
-  (earliest, ~11% fewer expansions) but return the **BFS-shortest start→goal
-  path in the recorded union graph** instead of the parent-pointer splice.
-  The returned plan is then provably the best plan in the explored subgraph —
-  the seam-quality objection that forced the revert disappears, since *any*
-  detection rule now yields the same (repaired) path quality; detection speed
-  and path quality are decoupled. This also *tightens the labels* Wave 1b
-  needs. (Resolves the open "principled meeting" idea from 2026-06-22: repair
-  subsumes the middle-ground seam rule — earliness becomes safe.)
+- **a. Seam repair + meet-on-generate. ✅ DONE, ADOPTED (2026-07-02).**
+  Detect the meeting at *generation* (earliest) but return the **BFS-shortest
+  start→goal path in the recorded union graph** instead of the parent-pointer
+  splice — provably the best plan in the explored subgraph; detection speed
+  and path quality decoupled; tightens the labels Wave 1b needs. (Resolved
+  the open "principled meeting" idea from 2026-06-22.)
+  *3-seed result: held-out avg 199.0/184.5/591 vs legacy reference
+  197.3/196/608 (+1.7 solved incl. a first-ever 200/200; −6% median), with
+  repaired plans SHORTER than legacy's on all seeds. Defaults flipped.*
 - **b. Exact relabeling of on-path pairs.** Keep the pair *distribution*
   bit-identical (history: distribution, not label optimality, is what made
   bootstrap win) but label each mined pair with the exact directed

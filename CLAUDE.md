@@ -17,7 +17,11 @@
 - Bidirectional TTBS, `temporal` anchor, learned pairwise NN heuristic trained on-policy
   with `LOSS=both` (0.5·MSE + 0.5·margin) **+ `PATH_RANK`** (within-path pairs-of-pairs
   margin — default on since its 3-seed validation; `PATH_RANK=no` recovers the old baseline).
-- Stored 3-seed reference numbers live in `rank_forward/experiments/README.md`.
+- **Meeting: `meet_on_generate=True` + `seam_repair=True`** (Wave 1a, default since its
+  3-seed validation) — earliest detection + BFS-shortest path over the explored subgraph;
+  `MEET_ON_GENERATE=no SEAM_REPAIR=no` recovers the legacy reference.
+- Stored 3-seed reference numbers live in `rank_forward/experiments/README.md`
+  (current reference: avg 199.0 solved / 184.5 median / 591 mean on the held-out 200).
 
 ## Data
 - Default benchmark is the **solvable-only** dataset `data/solvable10_3box.txt`
