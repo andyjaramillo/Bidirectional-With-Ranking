@@ -97,14 +97,21 @@ flipped-backward adjacency over full-state keys. Four proposals consume it.
   *3-seed result: held-out avg 199.0/184.5/591 vs legacy reference
   197.3/196/608 (+1.7 solved incl. a first-ever 200/200; −6% median), with
   repaired plans SHORTER than legacy's on all seeds. Defaults flipped.*
-- **b. Exact relabeling of on-path pairs.** Keep the pair *distribution*
-  bit-identical (history: distribution, not label optimality, is what made
-  bootstrap win) but label each mined pair with the exact directed
-  union-graph distance instead of `|i−j|`. Strictly tighter targets, zero
-  distribution shift.
-- **c. BHFFA-correct scoring.** Add `+ g_b(d*)` to `f`. One line, zero cost,
-  retires a real theoretical objection; possibly a wash (lazy re-eval may
-  absorb it) — either outcome is knowledge.
+- **b. Exact relabeling of on-path pairs. ✅ CLOSED AS SUBSUMED BY 1a
+  (2026-07-02).** A subpath of a shortest path is a shortest path, so the
+  repaired path's `|i−j|` labels already ARE the exact union-graph distances.
+  Stage-0 diagnostic (118 puzzles): 62,266 on-path pairs, **zero slack**
+  (theorem confirmed end-to-end); legacy paths had slack on 3.1% of pairs
+  (mean 2.3 when present) — the noise 1a removed. *The residual label problem
+  is DIRECTIONAL*: reverse pairs (half of training data, labeled `j−i` by
+  symmetric duplication) have a finite explored-subgraph reverse distance only
+  15.3% of the time, and 35.4% of those are mislabeled (mean err +2.9, p90 8)
+  — the quasimetric asymmetry is real, gating OPEN the direction-correct-labels
+  proposal (see Wave 3 prerequisite).
+- **c. BHFFA-correct scoring. ⏳ 3-seed run in progress (2026-07-02).**
+  Add `+ g_b(d*)` to `f` (bhffa_g flag). One line, zero cost, retires a real
+  theoretical objection; possibly a wash (lazy re-eval may absorb it) — either
+  outcome is knowledge. Blind spot-check: mean −3.4%, median mixed.
 
 **Wave 2 — give `h` local distance structure (small, additive to the loss,
 following the proven pattern "add structure on top of the calibrated loss"):**
