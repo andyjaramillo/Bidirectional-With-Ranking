@@ -83,6 +83,36 @@ learned heuristic.** Anchor selection is not a lever for this method/domain.
 Run via `anchor_strategy_run.py` once per (seed, strategy), under `caffeinate`.
 Lesson: replicate across seeds before acting on a single-seed gap.
 
+## Within-path pairs-of-pairs margin (PATH_RANK) — a small, consistent win
+
+The buffer margin term already ranks pairs-of-pairs by their distance labels,
+but its random batch pairs are almost always **cross-puzzle**. The search's open
+list only ever compares nodes of the **same instance**, so within-instance
+ordering is the operationally relevant constraint. `PATH_RANK` adds it: for two
+pairs of nodes on the same fresh solution path, (p_i,p_j) and (p_i',p_j'),
+enforce `h(p_i,p_j) + margin <= h(p_i',p_j')` whenever `|i-j| < |i'-j'|`
+(32 sampled pairs per update → one h-batch, ~500 hinge comparisons; weight 0.5
+**added on top of** the untouched 0.5·MSE + 0.5·margin — scale stays pinned,
+unlike the failed pure-ranking losses; see git history `c197bae..75005cc`).
+
+**3 seeds (learned solved / median / mean), held-out 200, blind = 194/545/1380:**
+
+| seed | MSE+margin baseline | + PATH_RANK(w=0.5, pairs=32) |
+|---|---|---|
+| 0 | 197 / 247 / 726 | 199 / 237 / 669 |
+| 1 | 198 / 160 / 607 | 196 / 168 / 540 |
+| 2 | 197 / 225 / 710 | 197 / 184 / 615 |
+| **avg** | 197.3 / **211** / **681** | 197.3 / **196** / **608** |
+
+**Verdict: a modest but consistent improvement, clearest in the tail.** The
+**mean improves on all 3 of 3 seeds** (−8%, −11%, −13%; avg −11%) — the
+hard-instance tail is where within-instance ordering pays. Median improves on
+2/3 (avg −7%, inside the seed-noise band on its own); solve rate unchanged.
+No metric materially degrades on any seed. Cost: extra training-time compute
+only (~32 extra h-queries per update); zero search-time cost. Left default-off
+(`PATH_RANK=no`) pending the adopt-as-default decision; knobs `PATH_RANK_W`
+(0.5) and `PATH_RANK_PAIRS` (32) are untuned first guesses.
+
 ## Fairness notes (read before trusting the numbers)
 
 **The shared goal includes the player position.** The bidirectional method's goal
