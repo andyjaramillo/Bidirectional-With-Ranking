@@ -189,6 +189,20 @@ class BidirectionalF2FSearch:
         # unconstrained.
         self.use_g_in_f: bool = True
 
+        # ── BHFFA-complete scoring (APPROACH.md Wave 1c) ────────────────
+        # Classical front-to-front scoring (de Champeaux & Sint's BHFFA)
+        # estimates a FULL solution through candidate seam d:
+        #     f(n) = g_active(n) + h(n, d) + g_opp(d).
+        # Our TTBS score drops the g_opp(d*) term, so heap entries scored
+        # against anchors of different depths sit on incommensurable scales
+        # (a shallow anchor hides more remaining cost than a deep one).
+        # bhffa_g=True restores the term. Constant within an expansion round
+        # (one anchor per round), so survivor ordering is unchanged — the
+        # effect is purely on cross-round comparability of stale heap entries.
+        # Anchor mode only (full_f2f scorers unaffected). Default off pending
+        # 3-seed validation.
+        self.bhffa_g: bool = False
+
     # ──────────────────────────────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────────────────────────────
@@ -210,9 +224,12 @@ class BidirectionalF2FSearch:
                 + cols4.astype(np.uint8).tobytes())
 
     def _f_score(self, node_hash: str, g: int, opp_anchor_hash: Optional[str],
-                 active_game: SokobanGame, opp_game: SokobanGame) -> float:
+                 active_game: SokobanGame, opp_game: SokobanGame,
+                 opp_g: float = 0.0) -> float:
         """
-        f(s) = g(s) + h(s, d*)  — front-to-front cost estimate.
+        f(s) = g(s) + h(s, d*) [+ g_opp(d*) iff bhffa_g] — front-to-front
+        cost estimate; the optional term completes the BHFFA solution-cost
+        estimate through the seam d*.
 
         h is the MWPM-Manhattan distance between the box positions of s and
         the opponent anchor d*, where d* is first flipped into the active
@@ -220,11 +237,11 @@ class BidirectionalF2FSearch:
         """
         node_map = active_game.decodeMap(node_hash)
         if opp_anchor_hash is None:
-            return float(g + active_game.evaluateBoard(node_map))
+            return float(g + active_game.evaluateBoard(node_map) + opp_g)
         opp_anchor_map = opp_game.decodeMap(opp_anchor_hash)
         anchor_in_active = active_game.flipGame(opp_anchor_map)
         h = active_game.evaluateBoard(node_map, anchor_in_active)
-        return float(g + h)
+        return float(g + h + opp_g)
 
     def _anchor_other(self, opp_anchor_hash: Optional[str],
                       active_game: SokobanGame, opp_game: SokobanGame):
@@ -248,8 +265,9 @@ class BidirectionalF2FSearch:
         return other
 
     def _f_score_nn(self, node_hash: str, g: int, opp_anchor_hash: Optional[str],
-                 active_game: SokobanGame, opp_game: SokobanGame) -> float:
-        """f(s) = g(s) + max(0, h_nn(s, anchor)).
+                 active_game: SokobanGame, opp_game: SokobanGame,
+                 opp_g: float = 0.0) -> float:
+        """f(s) = g(s) + max(0, h_nn(s, anchor)) [+ g_opp(anchor) iff bhffa_g].
 
         h_nn is the learned model's predicted distance from the node to the
         opposite frontier's anchor (flipped into the active frame).
@@ -260,10 +278,11 @@ class BidirectionalF2FSearch:
         with torch.no_grad():
             h_nn = float(self.nn(node_map, active_game.target, other).item())
         h = max(0.0, h_nn)
-        return float((g + h) if self.use_g_in_f else h)
+        return float(((g + h) if self.use_g_in_f else h) + opp_g)
 
     def _f_score_nn_batch(self, node_maps, g_list, opp_anchor_hash: Optional[str],
-                          active_game: SokobanGame, opp_game: SokobanGame):
+                          active_game: SokobanGame, opp_game: SokobanGame,
+                          opp_g: float = 0.0):
         """Batched f-score for several nodes scored against ONE anchor.
 
         Axis-1 within-node batching: the survivors of a single expansion are
@@ -284,6 +303,8 @@ class BidirectionalF2FSearch:
                 node_maps, [active_game.target] * n, [other] * n).clamp_min(0.0)
         if self.use_g_in_f:
             h = h + torch.tensor(g_list, dtype=h.dtype, device=h.device)
+        if opp_g:
+            h = h + opp_g
         return h.tolist()
 
     # ── FULL front-to-front scorers (used iff self.full_f2f) ───────────────
@@ -517,6 +538,10 @@ class BidirectionalF2FSearch:
         # Opponent anchor per anchor_strategy ("temporal" returns the stored
         # last-expanded value verbatim — byte-identical default).
         opp_anchor = self._get_opp_anchor(is_forward)
+        # BHFFA completion term g_opp(d*): the anchor's own cost-from-seed on
+        # its side. Constant for this whole expansion round; 0 when disabled.
+        opp_anchor_g = (float(opp_g_map.get(opp_anchor, 0))
+                        if (self.bhffa_g and opp_anchor is not None) else 0.0)
 
         # ── FULL front-to-front: snapshot the opponent OPEN frontier once per
         # expansion (it cannot change mid-expansion — only the active side runs)
@@ -561,9 +586,11 @@ class BidirectionalF2FSearch:
                 # Lazy re-evaluation: anchor changed since this f-score was set
                 if last_tgt.get(u_hash) != opp_anchor:
                     if self.nn is not None:
-                        new_f = self._f_score_nn(u_hash, g, opp_anchor, game, opp_game)
+                        new_f = self._f_score_nn(u_hash, g, opp_anchor, game,
+                                                 opp_game, opp_g=opp_anchor_g)
                     else:
-                        new_f = self._f_score(u_hash, g, opp_anchor, game, opp_game)
+                        new_f = self._f_score(u_hash, g, opp_anchor, game,
+                                              opp_game, opp_g=opp_anchor_g)
                     last_tgt[u_hash] = opp_anchor
                     self._push(heap, new_f, g, u_hash)
                     continue
@@ -700,12 +727,13 @@ class BidirectionalF2FSearch:
             f_scores = self._f_score_nn_batch(
                 [vm for _, _, vm in survivors],
                 [ng for _, ng, _ in survivors],
-                opp_anchor, game, opp_game)
+                opp_anchor, game, opp_game, opp_g=opp_anchor_g)
             for (v_hash, new_g, _), v_f in zip(survivors, f_scores):
                 self._push(heap, v_f, new_g, v_hash)
         else:
             for v_hash, new_g, _ in survivors:
-                v_f = self._f_score(v_hash, new_g, opp_anchor, game, opp_game)
+                v_f = self._f_score(v_hash, new_g, opp_anchor, game, opp_game,
+                                    opp_g=opp_anchor_g)
                 self._push(heap, v_f, new_g, v_hash)
 
         # FULL-F2F: bump THIS side's frontier version once per expansion (covers

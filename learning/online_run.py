@@ -100,6 +100,11 @@ MEET_ON_GENERATE = os.environ.get("MEET_ON_GENERATE", "yes").lower() == "yes"
 # 3-seed validated: held-out avg 199.0/184.5/591 vs legacy 197.3/196/608, with
 # SHORTER plans than legacy on all seeds.
 SEAM_REPAIR = os.environ.get("SEAM_REPAIR", "yes").lower() == "yes"
+# BHFFA-complete scoring (APPROACH.md Wave 1c): f(n) = g(n) + h(n,d*) + g_opp(d*)
+# — restores the classical front-to-front term our TTBS score drops, putting
+# heap entries scored against anchors of different depths on one scale.
+# Default off pending 3-seed validation.
+BHFFA_G = os.environ.get("BHFFA_G", "no").lower() == "yes"
 # Full front-to-front: score nodes against the WHOLE opponent open frontier
 # (min over all live opponent open nodes) instead of the single temporal anchor.
 # In principle slow; applies to BOTH the training solves and the CPU twin so the
@@ -124,6 +129,7 @@ def run_search(puzzle, nn_model=None):
     s.use_g_in_f = USE_G
     s.meet_on_generate = MEET_ON_GENERATE
     s.seam_repair = SEAM_REPAIR
+    s.bhffa_g = BHFFA_G
     s.full_f2f = FULL_F2F
     s.anchor_strategy = ANCHOR_STRATEGY
     t0 = time.time()
