@@ -109,9 +109,11 @@ unlike the failed pure-ranking losses; see git history `c197bae..75005cc`).
 hard-instance tail is where within-instance ordering pays. Median improves on
 2/3 (avg −7%, inside the seed-noise band on its own); solve rate unchanged.
 No metric materially degrades on any seed. Cost: extra training-time compute
-only (~32 extra h-queries per update); zero search-time cost. Left default-off
-(`PATH_RANK=no`) pending the adopt-as-default decision; knobs `PATH_RANK_W`
-(0.5) and `PATH_RANK_PAIRS` (32) are untuned first guesses.
+only (~32 extra h-queries per update); zero search-time cost.
+**ADOPTED AS DEFAULT** (`PATH_RANK=yes`): from here on, the reference
+bidirectional configuration is MSE+margin+PATH_RANK; the table above is the
+adoption evidence, and `PATH_RANK=no` recovers the old baseline. Knobs
+`PATH_RANK_W` (0.5) and `PATH_RANK_PAIRS` (32) are untuned first guesses.
 
 ## Fairness notes (read before trusting the numbers)
 

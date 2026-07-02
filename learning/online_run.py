@@ -68,7 +68,7 @@ LOSS = os.environ.get("LOSS", "both").lower()
 # Regression-term flavor for "mse"/"both": "mae" (L1) or "mse" (L2).
 REG_LOSS = os.environ.get("REG_LOSS", "mse").lower()
 RANK_MARGIN = float(os.environ.get("RANK_MARGIN", "1.0"))
-# Within-path pairs-of-pairs margin (additive optimization experiment): for two
+# Within-path pairs-of-pairs margin (DEFAULT since 3-seed validation): for two
 # pairs of nodes on the SAME fresh solution path, (x,y)=(p_i,p_j) and
 # (x',y')=(p_i',p_j'), enforce the margin-ranking constraint
 #     h(x,y) + RANK_MARGIN <= h(x',y')   whenever |i-j| < |i'-j'|.
@@ -79,7 +79,10 @@ RANK_MARGIN = float(os.environ.get("RANK_MARGIN", "1.0"))
 # loss, which keeps h's scale pinned. Per update, PATH_RANK_PAIRS on-path pairs
 # are sampled and ALL comparable combinations among them are penalised (dense:
 # one h-batch of size PATH_RANK_PAIRS yields ~PAIRS^2/2 comparisons).
-PATH_RANK = os.environ.get("PATH_RANK", "no").lower() == "yes"
+# 3-seed held-out result vs plain MSE+margin: mean expansions -11% (better on
+# 3/3 seeds), median -7% (2/3), solve rate unchanged. PATH_RANK=no disables
+# (recovers the pre-adoption reference configuration).
+PATH_RANK = os.environ.get("PATH_RANK", "yes").lower() == "yes"
 PATH_RANK_PAIRS = int(os.environ.get("PATH_RANK_PAIRS", "32"))
 PATH_RANK_W = float(os.environ.get("PATH_RANK_W", "0.5"))
 # If "no", drop g from the f-score (GBFS instead of A*-style).

@@ -13,6 +13,12 @@
 - The goal is **not** the best Sokoban bot. We want methods that generalize to planning
   problems broadly. **Avoid adding Sokoban-specific ingredients;** keep changes domain-agnostic.
 
+## Method defaults (reference configuration)
+- Bidirectional TTBS, `temporal` anchor, learned pairwise NN heuristic trained on-policy
+  with `LOSS=both` (0.5·MSE + 0.5·margin) **+ `PATH_RANK`** (within-path pairs-of-pairs
+  margin — default on since its 3-seed validation; `PATH_RANK=no` recovers the old baseline).
+- Stored 3-seed reference numbers live in `rank_forward/experiments/README.md`.
+
 ## Data
 - Default benchmark is the **solvable-only** dataset `data/solvable10_3box.txt`
   (load via `game.getData.get_solvable_data(limit=...)`). It excludes the player-goal-pinned
