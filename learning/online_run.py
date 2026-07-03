@@ -128,6 +128,13 @@ BHFFA_G = os.environ.get("BHFFA_G", "yes").lower() == "yes"
 # search class docs). DEFAULT on since 3-seed validation: median -10.2%,
 # mean -12.2% vs the Wave-1 reference, better on 3/3 seeds each.
 DIRECTED = os.environ.get("DIRECTED", "yes").lower() == "yes"
+# The embedding model queries h asymmetrically (d(source->dest), forward-frame),
+# so it REQUIRES direction-correct labels; with DIRECTED=no the buffer stores
+# symmetric pairs and training would silently mismatch the search queries.
+# Fail fast rather than train a mis-specified embedding (defaults are safe).
+if MODEL in ("embed", "embedcnn", "quasinet") and not DIRECTED:
+    raise SystemExit("MODEL=embed requires DIRECTED=yes (asymmetric embedding "
+                     "queries vs symmetric labels would silently mismatch).")
 # Local metric grounding (APPROACH.md Wave 2d): give h the two local axioms of
 # a true cost-to-go that pointwise regression never enforces.
 #   CONSIST: one-step consistency hinges along VERIFIED path edges —
