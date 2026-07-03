@@ -49,6 +49,14 @@ MODEL_CHANNELS = int(os.environ.get("MODEL_CHANNELS", "32"))
 # "smallcnn_attn" (adds one positional self-attention block between the
 # conv tower and the MLP head — global receptive field in a single layer).
 MODEL = os.environ.get("MODEL", "smallcnn").lower()
+# Factorized (quasi)metric embedding model (APPROACH.md Wave 3): MODEL=embed.
+# HEAD picks the combiner: 'quasi' (asymmetric quasimetric, triangle + h(x,x)=0
+# by construction — the principled target), 'l1' (symmetric pseudometric),
+# 'mlp' (unconstrained; isolates the pure-factorization effect). EMBED_K is the
+# embedding dim. Intended to run with DIRECTED (default): h(x,y)=dist(phi(x),
+# phi(y)) estimates the forward-dynamics distance the buffer labels match.
+HEAD = os.environ.get("HEAD", "quasi").lower()
+EMBED_K = int(os.environ.get("EMBED_K", "64"))
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "64"))
 UPDATES_PER_SOLVE = int(os.environ.get("UPDATES_PER_SOLVE", "8"))
 WARMUP = int(os.environ.get("WARMUP", "200"))
@@ -525,19 +533,22 @@ _pr_tag += (f" +HINDSIGHT(per={HINDSIGHT_PER_PUZZLE},cap={HINDSIGHT_LABEL_CAP})"
 print(f"\n[Online] batch={BATCH_SIZE} K={UPDATES_PER_SOLVE} warmup={WARMUP} "
       f"buffer={BUFFER_CAP} loss={LOSS} reg_loss={REG_LOSS}{_pr_tag} "
       f"use_g={USE_G} train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
+_model_kw = (dict(k=EMBED_K, head=HEAD)
+             if MODEL in ("embed", "embedcnn", "quasinet") else {})
 torch.manual_seed(SEED + 100)
-train_model = build_model(MODEL, MODEL_CHANNELS)
+train_model = build_model(MODEL, MODEL_CHANNELS, **_model_kw)
 if TRAIN_DEVICE != "cpu":
     train_model = train_model.to(TRAIN_DEVICE)
 criterion, optimizer = train_model.initialize_cr_opt(loss_type=REG_LOSS)
 torch.manual_seed(SEED)
-print(f"  model={MODEL}  params={sum(p.numel() for p in train_model.parameters()):,}")
+_mtag = f"{MODEL}({HEAD},k={EMBED_K})" if _model_kw else MODEL
+print(f"  model={_mtag}  params={sum(p.numel() for p in train_model.parameters()):,}")
 
 # Search runs on a CPU twin (same object if training is already CPU).
 if TRAIN_DEVICE == "cpu":
     search_model = train_model
 else:
-    search_model = build_model(MODEL, MODEL_CHANNELS)
+    search_model = build_model(MODEL, MODEL_CHANNELS, **_model_kw)
 
 
 def sync_search_model():

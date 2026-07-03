@@ -552,6 +552,124 @@ class SmallCNNAttn(SmallCNN):
         return F.linear(h, self.fc2.weight, self.fc2.bias)
 
 
+class EmbedCNN(nn.Module):
+    """Factorized (quasi)metric heuristic: h(x, y) = d(phi(x), phi(y)).
+
+    A single conv tower embeds ONE board (5 one-hot channels + target marking)
+    to a k-dim vector; a selectable head combines (phi(x), phi(y)) into a scalar
+    distance. The (state, target, other) forward/forward_batch signature is
+    preserved (both argument lists are embedded in ONE stacked pass, then the
+    head), so online_run's MSE+margin+PATH_RANK+HINDSIGHT training loop runs
+    UNCHANGED. embed_batch/dist/dist_matrix expose the factorization to the
+    search: each node is embedded once and cached, so re-scoring against a new
+    anchor is an O(k) vector op (not a conv pass), and full front-to-front is a
+    cached distance matrix.
+
+    Built for the DIRECTED convention (default): h(x, y) estimates the forward
+    dynamics distance d(x -> y), and the buffer's direction-correct
+    (source -> dest) forward-frame pairs match it.
+
+    HEAD (env HEAD):
+      'l1'    : sum|phi(x) - phi(y)|                      symmetric pseudometric
+      'quasi' : ||sym_x - sym_y||_2  +  mean_g max_i relu(phi_y[g,i]-phi_x[g,i])
+                asymmetric quasimetric (MRN/IQE-style). Each term is >=0, is 0
+                at x==y, and satisfies the triangle inequality (proof: for the
+                group term, max(0, max_i(z_i-x_i)) <= max(0,max_i(z_i-y_i)) +
+                max(0,max_i(y_i-x_i)) since max_i of a sum <= sum of max_i); sums
+                preserve all three, so h is a genuine quasimetric BY CONSTRUCTION.
+      'mlp'   : MLP([phi_x, phi_y, |phi_x-phi_y|, phi_x*phi_y]) -- no axioms;
+                isolates the pure-factorization effect from the metric constraint.
+    """
+
+    def __init__(self, channels=32, k=64, head="quasi", groups=8):
+        super().__init__()
+        self.k = k
+        self.head = head
+        self.conv1 = nn.Conv2d(5, channels, 3, padding=1)
+        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.conv3 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.fc = nn.Linear(channels, k)
+        if head == "quasi":
+            self.k_sym = k // 2
+            self.n_groups = groups
+            self.grp_w = (k - self.k_sym) // groups
+            if self.k_sym + self.n_groups * self.grp_w != k:
+                raise ValueError(f"quasi head needs k//2 + groups*w == k "
+                                 f"(k={k}, groups={groups})")
+        elif head == "mlp":
+            self.comb = nn.Sequential(nn.Linear(4 * k, 64), nn.ReLU(),
+                                      nn.Linear(64, 1))
+        elif head != "l1":
+            raise ValueError(f"unknown head: {head!r}")
+        self._helper = NN.__new__(NN)   # uninitialized; only for its methods
+        nn.Module.__init__(self._helper)
+
+    # ── encoder ────────────────────────────────────────────────────────────
+    def _embed(self, boards, targets):
+        """(list of boards, list of targets) -> (B, k) embeddings (grad-aware)."""
+        mats = [NN.to_categorical_tensor(self._helper, b, t, 10, 10)
+                for b, t in zip(boards, targets)]            # each (10,10,5)
+        x = torch.from_numpy(np.stack(mats)).permute(0, 3, 1, 2).float().contiguous()
+        dev = self.conv1.weight.device
+        if dev.type != "cpu":
+            x = x.to(dev)
+        x = F.relu(F.conv2d(x, self.conv1.weight, self.conv1.bias, padding=1))
+        x = F.relu(F.conv2d(x, self.conv2.weight, self.conv2.bias, padding=1))
+        x = F.relu(F.conv2d(x, self.conv3.weight, self.conv3.bias, padding=1))
+        x = F.adaptive_avg_pool2d(x, (1, 1)).flatten(1)
+        return F.linear(x, self.fc.weight, self.fc.bias)      # (B, k)
+
+    def embed_batch(self, boards, targets):
+        """Search-side embedding (no grad); returns a detached (B, k) tensor."""
+        with torch.no_grad():
+            return self._embed(boards, targets)
+
+    # ── distance heads ───────────────────────────────────────────────────────
+    def dist(self, U, V):
+        """Elementwise d(U_i, V_i) for (B, k) tensors -> (B,). d(x -> y)."""
+        if self.head == "l1":
+            return (U - V).abs().sum(-1)
+        if self.head == "quasi":
+            ks, G, w = self.k_sym, self.n_groups, self.grp_w
+            sym = torch.sqrt(((U[:, :ks] - V[:, :ks]) ** 2).sum(-1) + 1e-12)
+            ua = U[:, ks:].view(-1, G, w)
+            va = V[:, ks:].view(-1, G, w)
+            asym = torch.relu(va - ua).amax(dim=-1).mean(dim=-1)   # (B,G)->(B,)
+            return sym + asym
+        # mlp
+        return self.comb(torch.cat([U, V, (U - V).abs(), U * V], -1)).squeeze(-1)
+
+    def dist_matrix(self, U, V):
+        """All-pairs d(U_n -> V_m) for (N,k),(M,k) -> (N,M). For full-F2F.
+        Implemented for the metric heads (l1/quasi); mlp raises (its full-F2F
+        would be N*M combiner evals -- not the head used for the gold standard)."""
+        if self.head == "l1":
+            return torch.cdist(U, V, p=1)
+        if self.head == "quasi":
+            ks, G, w = self.k_sym, self.n_groups, self.grp_w
+            sym = torch.cdist(U[:, :ks], V[:, :ks], p=2)            # (N,M)
+            ua = U[:, ks:].view(-1, G, w)                          # (N,G,w)
+            va = V[:, ks:].view(-1, G, w)                          # (M,G,w)
+            diff = va.unsqueeze(0) - ua.unsqueeze(1)               # (N,M,G,w)
+            asym = torch.relu(diff).amax(dim=-1).mean(dim=-1)      # (N,M)
+            return sym + asym
+        raise NotImplementedError("dist_matrix undefined for the 'mlp' head")
+
+    # ── preserved SmallCNN-compatible interface ─────────────────────────────
+    def forward_batch(self, states, targets, others):
+        n = len(states)
+        U = self._embed(list(states) + list(others),
+                        list(targets) + list(targets))
+        return self.dist(U[:n], U[n:])
+
+    def forward(self, state, box_tar, goal_state):
+        return self.forward_batch([state], [box_tar], [goal_state])[0]
+
+    def initialize_cr_opt(self, lr=1e-3, loss_type="mae"):
+        crit = nn.MSELoss() if loss_type == "mse" else nn.L1Loss()
+        return crit, optim.Adam(self.parameters(), lr=lr)
+
+
 def build_model(name="smallcnn", channels=32, **kw):
     """Factory used by online_run to select a heuristic model by name."""
     name = name.lower()
@@ -559,6 +677,8 @@ def build_model(name="smallcnn", channels=32, **kw):
         return SmallCNN(channels)
     if name in ("smallcnn_attn", "attn", "cnn_attn"):
         return SmallCNNAttn(channels, **kw)
+    if name in ("embed", "embedcnn", "quasinet"):
+        return EmbedCNN(channels, **kw)
     raise ValueError(f"unknown model: {name!r}")
 
 
