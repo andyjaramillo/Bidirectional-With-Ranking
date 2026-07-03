@@ -157,7 +157,25 @@ variants; brute-force full-F2F with the monolithic net; ranking-only losses;
 capacity-only architecture changes ("more attention" without a structural
 argument); anything Sokoban-specific.
 
-## 4. Why this is the elegant path
+## 4. Cost-generality (design principle, 2026-07-03)
+
+We intend to move beyond unit-cost problems, so **new methods must not bake in
+unit costs**: loss terms take edge costs from a hook (`path_edge_costs`,
+default 1.0 here); the consistency hinge is `relu(h(s_i,s_j) − c(s_i,s_{i+1})
+− h(s_{i+1},s_j))`, not `−1−`; the telescoping-admissibility argument holds
+verbatim with `Σc` in place of `j−i`. Inventory of EXISTING unit-cost
+touchpoints to port when a weighted domain arrives (all mechanically
+Dijkstra-/cost-generalizable, none conceptually unit-bound):
+- `_expand`'s `new_g = g + 1` (→ `g + c(u,v)`);
+- `refine_path` and `off_path_distance_to_goal` BFS (→ Dijkstra; the
+  subpath-of-shortest-path theorem behind Wave 1b's closure holds for any
+  nonnegative costs);
+- path labels `|i−j|` (→ cumulative path cost differences), and PATH_RANK's
+  index-based ordering (→ order by cumulative cost);
+- fixed margins `RANK_MARGIN=1.0` etc. are *scale hyperparameters*, to be
+  re-tuned (or cost-scaled) on weighted domains rather than assumed.
+
+## 5. Why this is the elegant path
 
 Every item either (i) replaces a biased surrogate with the exact quantity the
 search semantically needs (1a, 1b, 2e), (ii) restores a term or constraint the

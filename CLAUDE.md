@@ -12,6 +12,11 @@
 ## Research goal (overarching constraint)
 - The goal is **not** the best Sokoban bot. We want methods that generalize to planning
   problems broadly. **Avoid adding Sokoban-specific ingredients;** keep changes domain-agnostic.
+- **Cost-generality (2026-07-03): do not bake unit-cost assumptions into new methods.**
+  We want to venture beyond unit-cost problems later. New loss terms / graph machinery must
+  read edge costs from a single hook (default 1.0 on this testbed) rather than hardwiring
+  "+1"; shortest-path helpers should be Dijkstra-ready (BFS only as the uniform-cost fast
+  path). See APPROACH.md "Cost-generality" for the inventory of existing unit-cost touchpoints.
 
 ## Method defaults (reference configuration)
 - Bidirectional TTBS, `temporal` anchor, learned pairwise NN heuristic trained on-policy

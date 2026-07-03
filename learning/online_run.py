@@ -120,6 +120,23 @@ BHFFA_G = os.environ.get("BHFFA_G", "yes").lower() == "yes"
 # search class docs). DEFAULT on since 3-seed validation: median -10.2%,
 # mean -12.2% vs the Wave-1 reference, better on 3/3 seeds each.
 DIRECTED = os.environ.get("DIRECTED", "yes").lower() == "yes"
+# Local metric grounding (APPROACH.md Wave 2d): give h the two local axioms of
+# a true cost-to-go that pointwise regression never enforces.
+#   CONSIST: one-step consistency hinges along VERIFIED path edges —
+#     h(s_i,s_j) <= c(s_i,s_{i+1}) + h(s_{i+1},s_j)   (step the source)
+#     h(s_i,s_j) <= h(s_i,s_{j-1}) + c(s_{j-1},s_j)   (step the destination)
+#   both are theorems of the true quasimetric (triangle inequality through a
+#   verified edge; Pearl's consistency / one-sided Bellman on observed edges).
+#   N_ZERO_PAIRS: (x, x, 0.0) anchor pairs through the existing MSE term.
+#   Together they telescope to cost-admissibility along every observed path:
+#   h(s_i,s_j) <= sum of edge costs. COST-GENERAL by construction: the hinge
+#   reads edge costs from path_edge_costs() (1.0 on this unit-cost testbed),
+#   never a hardwired "+1". Additive on top of the untouched loss (the proven
+#   pattern). Default off pending 3-seed validation.
+CONSIST = os.environ.get("CONSIST", "no").lower() == "yes"
+CONSIST_W = float(os.environ.get("CONSIST_W", "0.5"))
+CONSIST_TRIPLES = int(os.environ.get("CONSIST_TRIPLES", "16"))
+N_ZERO_PAIRS = int(os.environ.get("N_ZERO_PAIRS", "0"))
 # Full front-to-front: score nodes against the WHOLE opponent open frontier
 # (min over all live opponent open nodes) instead of the single temporal anchor.
 # In principle slow; applies to BOTH the training solves and the CPU twin so the
@@ -151,6 +168,51 @@ def run_search(puzzle, nn_model=None):
     t0 = time.time()
     path = s.search(max_iterations=MAX_ITERS)
     return path, s, time.time() - t0
+
+
+def path_edge_costs(path_boards):
+    """Edge costs along a mined path — the SINGLE hook new loss terms read
+    costs from (cost-generality principle, CLAUDE.md). This testbed is
+    unit-cost; on a weighted domain, replace with the real cost function.
+    Returns a list of length len(path_boards) - 1."""
+    return [1.0] * (len(path_boards) - 1)
+
+
+def path_consistency_loss(model, path_boards, target, rng, n_triples,
+                          edge_costs):
+    """One-step consistency hinges on verified path edges (Wave 2d).
+
+    Samples ``n_triples`` index pairs (i, j) with i+1 < j and penalises
+        relu(h(s_i,s_j) - c_i     - h(s_{i+1},s_j))    # step the source
+      + relu(h(s_i,s_j) - h(s_i,s_{j-1}) - c_{j-1})    # step the destination
+    where c_k = edge_costs[k] is the cost of the verified edge s_k -> s_{k+1}.
+    One batched forward pass over the 3n involved pairs. Both hinges are
+    one-sided theorems of the true quasimetric, so they only fire on genuine
+    violations (with exact-in-subgraph labels the constraints are tight
+    equalities at the regression optimum — the hinge adds signal exactly
+    where regression is loose). Returns None if the path is too short.
+    """
+    L = len(path_boards)
+    if L < 3:
+        return None
+    idx = [(i, j) for i in range(L - 2) for j in range(i + 2, L)]
+    sel = rng.sample(idx, n_triples) if len(idx) > n_triples else idx
+    n = len(sel)
+    states, others = [], []
+    for i, j in sel:
+        states += [path_boards[i], path_boards[i + 1], path_boards[i]]
+        others += [path_boards[j], path_boards[j], path_boards[j - 1]]
+    h = model.forward_batch(states, [target] * (3 * n), others)
+    if h.ndim == 0:
+        h = h.unsqueeze(0)
+    h = h.view(n, 3)                       # columns: (i,j), (i+1,j), (i,j-1)
+    c_src = torch.tensor([edge_costs[i] for i, _ in sel], dtype=h.dtype,
+                         device=h.device)
+    c_dst = torch.tensor([edge_costs[j - 1] for _, j in sel], dtype=h.dtype,
+                         device=h.device)
+    viol = (torch.relu(h[:, 0] - c_src - h[:, 1])
+            + torch.relu(h[:, 0] - h[:, 2] - c_dst))
+    return viol.mean()
 
 
 def path_pair_rank_loss(model, path_boards, target, rng, n_pairs, margin):
@@ -277,6 +339,14 @@ def solve_and_collect(puzzle, puzzle_id, nn_model, buffer, rng):
         puzzle_id=puzzle_id, rng=rng,
     )
 
+    # Wave 2d zero anchoring: (x, x, 0.0) pairs through the plain MSE term —
+    # the base case of the telescoping cost-admissibility argument (and
+    # consistent with the search-time clamp max(0, h)).
+    for _ in range(min(N_ZERO_PAIRS, len(decoded))):
+        b = decoded[rng.randrange(len(decoded))]
+        buffer.add(b, s.forward_game.target, b, 0.0, puzzle_id)
+        n_pairs += 1
+
     if COLLECT_OFF_PATH:
         dist, goal_board = off_path_distance_to_goal(s)
         if dist is not None:
@@ -330,6 +400,9 @@ print(f"  done in {time.time()-t0:.1f}s  mean iters={np.mean(base_iters):.1f}  "
 _pr_tag = (f" +PATH_RANK(w={PATH_RANK_W},pairs={PATH_RANK_PAIRS})"
            if PATH_RANK else "")
 _pr_tag += " DIRECTED" if DIRECTED else ""
+_pr_tag += (f" +CONSIST(w={CONSIST_W},triples={CONSIST_TRIPLES})"
+            if CONSIST else "")
+_pr_tag += f" zero_pairs={N_ZERO_PAIRS}" if N_ZERO_PAIRS else ""
 print(f"\n[Online] batch={BATCH_SIZE} K={UPDATES_PER_SOLVE} warmup={WARMUP} "
       f"buffer={BUFFER_CAP} loss={LOSS} reg_loss={REG_LOSS}{_pr_tag} "
       f"use_g={USE_G} train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
@@ -389,12 +462,13 @@ for n, p in enumerate(puzzles):
 
     # Training.
     if len(buffer) >= WARMUP:
-        # Within-path pairs-of-pairs margin: decode the fresh path once per
-        # solve; each update below samples its own subset of pairs from it.
+        # Within-path terms (PATH_RANK / CONSIST): decode the fresh path once
+        # per solve; each update below samples its own subset from it.
         path_boards = None
-        if PATH_RANK and path and len(path) >= 3:
+        if (PATH_RANK or CONSIST) and path and len(path) >= 3:
             path_boards = [s.forward_game.decodeMap(h) for h in path]
             pr_target = s.forward_game.target
+            pr_costs = path_edge_costs(path_boards)
         for _ in range(UPDATES_PER_SOLVE):
             samples = buffer.sample(BATCH_SIZE)
             optimizer.zero_grad()
@@ -425,11 +499,18 @@ for n, p in enumerate(puzzles):
                 loss = 0.5 * mse + 0.5 * rank_loss
 
             # Additive within-path pairs-of-pairs margin (PATH_RANK).
-            if path_boards is not None:
+            if path_boards is not None and PATH_RANK:
                 pr = path_pair_rank_loss(train_model, path_boards, pr_target,
                                          _rng, PATH_RANK_PAIRS, RANK_MARGIN)
                 if pr is not None:
                     loss = loss + PATH_RANK_W * pr
+
+            # Additive one-step consistency hinge (CONSIST, Wave 2d).
+            if path_boards is not None and CONSIST:
+                lc = path_consistency_loss(train_model, path_boards, pr_target,
+                                           _rng, CONSIST_TRIPLES, pr_costs)
+                if lc is not None:
+                    loss = loss + CONSIST_W * lc
 
             loss.backward()
             optimizer.step()

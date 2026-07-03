@@ -1,5 +1,6 @@
 import numpy as np
 import heapq
+import random as _pyrandom
 from collections import deque
 from typing import Tuple, Dict, List, Optional, Set
 from game.SokobanGame import SokobanGame
@@ -228,6 +229,29 @@ class BidirectionalF2FSearch:
         # heuristic). Pair with DIRECTED labels (learning/online_run.py).
         self.dir_correct: bool = True
 
+        # ── Query log (Wave 2e diagnostics / hindsight supervision) ─────
+        # When log_queries=True, reservoir-sample the NN h-queries the search
+        # actually issues: entries (node_board, opp_anchor_hash, is_backward).
+        # The canonical (source -> dest) pair follows the dir_correct
+        # convention: forward side = (node -> anchor), backward side =
+        # (anchor -> node). Measurement-only; off by default, zero overhead.
+        self.log_queries: bool = False
+        self.query_log: List[Tuple[np.ndarray, Optional[str], bool]] = []
+        self.query_log_k: int = 256
+        self._query_seen: int = 0
+
+    def _log_query(self, node_map: np.ndarray, opp_anchor_hash: Optional[str],
+                   is_backward: bool) -> None:
+        """Reservoir-sample one issued h-query (uniform over all queries)."""
+        self._query_seen += 1
+        entry = (np.array(node_map, copy=True), opp_anchor_hash, is_backward)
+        if len(self.query_log) < self.query_log_k:
+            self.query_log.append(entry)
+        else:
+            r = _pyrandom.randrange(self._query_seen)
+            if r < self.query_log_k:
+                self.query_log[r] = entry
+
     # ──────────────────────────────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────────────────────────────
@@ -316,6 +340,9 @@ class BidirectionalF2FSearch:
         """
         import torch
         node_map = active_game.decodeMap(node_hash)
+        if self.log_queries:
+            self._log_query(node_map, opp_anchor_hash,
+                            active_game is self.backward_game)
         if self.dir_correct and active_game is self.backward_game:
             src = self._dir_source(opp_anchor_hash)
             node_f = self.forward_game.flipGame(node_map)
@@ -345,6 +372,10 @@ class BidirectionalF2FSearch:
         if not node_maps:
             return []
         n = len(node_maps)
+        if self.log_queries:
+            is_b = active_game is self.backward_game
+            for nm in node_maps:
+                self._log_query(nm, opp_anchor_hash, is_b)
         if self.dir_correct and active_game is self.backward_game:
             # DIRECTED backward side: swapped arguments, forward frame.
             src = self._dir_source(opp_anchor_hash)
