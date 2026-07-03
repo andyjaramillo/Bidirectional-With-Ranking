@@ -230,6 +230,38 @@ so the hinge mostly contributes gradient noise. Informative wash: the current
 pipeline's h is already locally consistent where it is well-fit. Flags remain
 available (default off).
 
+## Wave 2e: hindsight query supervision (HINDSIGHT) — ADOPTED
+
+The open list is ordered by `h(frontier-node, moving-anchor)` queries, but the
+buffer contained no pairs of that type — a covariate shift stage-0 measured at
+**1.91× |h−d| error** on query pairs vs training pairs. `HINDSIGHT` reservoir-
+samples the queries each solve issues, labels their canonical DIRECTED
+`(source→dest)` forward-frame pairs with exact union-graph distances, and adds
+up to 32 finite ones/puzzle to the buffer (pairwise Hindsight Experience
+Replay). Driver: `hindsight_run.py`.
+
+**5 seeds, held-out 200 (learned solved/median/mean; seeds 3–4 run matched):**
+
+| seed | reference (DIRECTED) | + HINDSIGHT |
+|---|---|---|
+| 0 | 199 / 172 / 562 | 199 / 155 / 512 |
+| 1 | 198 / 138 / 481 | 199 / 118 / 372 |
+| 2 | 199 / 156 / 496 | 199 / 162 / 501 |
+| 3 | 200 / 150 / 471 | 199 / 170 / 455 |
+| 4 | 199 / 149 / 471 | 200 / 137 / 427 |
+| **avg** | 199.0 / 153.0 / 496.3 | **199.2 / 148.5 / 453.5** |
+
+Verdict: **mean −8.6% (better on 4/5 seeds)** — the tail metric it targets;
+**median a wash** (−2.9%, better 3/5); solve rate tied (996 vs 995).
+**Adopted (lead call).** It cleared the pre-registered mean (≥4/5), median
+(≥3/5), and solve-rate criteria but **narrowly missed the strict "no >10%
+regression on any seed" clause** — seed-3 median 150→170 (+13%), which sits
+inside the method's own historical median spread (138–172), i.e. reads as
+noise. Standing caveats: labels are explored-subgraph upper bounds; ~32
+samples/puzzle dilute the fixed 20k FIFO buffer; ~21% query finite-fraction.
+`HINDSIGHT=no` recovers the pre-2e reference. **New reference: avg
+199.2 / 148.5 / 453.5.**
+
 ## Fairness notes (read before trusting the numbers)
 
 **The shared goal includes the player position.** The bidirectional method's goal

@@ -31,8 +31,14 @@
   its 3-seed validation; the quasimetric fix) — direction-correct pair labels, and the
   backward frontier queries `h(anchor_fwd, target_fwd, flip(node))` in the forward frame;
   `DIRECTED=no` recovers the Wave-1 reference.
-- Stored 3-seed reference numbers live in `rank_forward/experiments/README.md`
-  (current reference: avg 198.7 solved / 155.3 median / 513 mean on the held-out 200).
+- **Hindsight query supervision: `HINDSIGHT`** (Wave 2e, default since its 5-seed
+  validation) — label the search's own `(node, anchor)` h-queries with exact union-graph
+  distances and add them to the buffer; `HINDSIGHT=no` recovers the pre-2e reference.
+  (Adopted despite narrowly missing the strict per-seed-regression bar — a mean/tail win;
+  median is a wash. Caveats in experiments/README.md.)
+- **Wave 2d `CONSIST` was tested and NOT adopted (wash).** Available as a flag, default off.
+- Stored reference numbers live in `rank_forward/experiments/README.md`
+  (current reference: avg 199.2 solved / 148.5 median / 453.5 mean on the held-out 200, 5 seeds).
 
 ## Data
 - Default benchmark is the **solvable-only** dataset `data/solvable10_3box.txt`

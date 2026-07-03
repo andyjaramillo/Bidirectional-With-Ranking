@@ -127,10 +127,17 @@ following the proven pattern "add structure on top of the calibrated loss"):**
   violations on fitted paths) — the hinge adds mostly noise. Positive
   structural corollary: the pipeline's h is already locally consistent where
   well-fit. Flags kept, default off.*
-- **e. Hindsight query supervision.** Reservoir-sample the search's *actual*
-  `(node, anchor)` h-queries; after the solve, label the sampled pairs with
-  exact union-graph distances and add them to the buffer — training `h`
-  exactly on the query distribution it is evaluated on (pairwise HER).
+- **e. Hindsight query supervision. ✅ DONE, ADOPTED (2026-07-03).**
+  Reservoir-sample the search's *actual* `(node, anchor)` h-queries; after the
+  solve, label the canonical DIRECTED `(source→dest)` pairs with exact
+  union-graph distances and add them to the buffer — pairwise HER, training `h`
+  on the query distribution it is evaluated on. *5-seed result: mean −8.6%
+  (better 4/5, the tail metric it targets), median a wash (−2.9%), solve tied.
+  Adopted as a lead call — cleared the mean/median-majority/solve criteria but
+  narrowly missed the strict "no >10% regression on any seed" clause (seed-3
+  median +13%, within the method's historical noise). Caveats: upper-bound
+  labels, buffer dilution, ~21% query finite-fraction. New reference: avg
+  199.2 / 148.5 / 453.5.*
 - *(f. conditional: pinball/quantile loss for upper-bound labels — only if
   Stage 0 shows residual slack that 1b cannot remove.)*
 

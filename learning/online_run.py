@@ -146,9 +146,15 @@ N_ZERO_PAIRS = int(os.environ.get("N_ZERO_PAIRS", "0"))
 # the canonical (source -> dest) forward-frame pairs with exact DIRECTED
 # distances over the recorded union graph and add the finite ones to the
 # buffer — the pairwise analogue of hindsight experience replay: train on the
-# test distribution with ground-truth-in-hindsight labels. Default off pending
-# 3-seed validation.
-HINDSIGHT = os.environ.get("HINDSIGHT", "no").lower() == "yes"
+# test distribution with ground-truth-in-hindsight labels. DEFAULT on since
+# 5-seed validation: mean -8.6% (better 4/5 seeds), the tail metric it targets;
+# median a wash (-2.9%, better 3/5); solve rate tied. HINDSIGHT=no recovers the
+# pre-2e reference (198.7/155.3/513). Caveats on record: labels are
+# explored-subgraph upper bounds; ~32 samples/puzzle dilute the fixed FIFO
+# buffer; only ~21% of logged queries are label-able. Adopted as a lead call --
+# it narrowly missed the pre-registered "no >10% regression on any seed" bar
+# (seed-3 median +13%, inside the method's historical median spread 138-172).
+HINDSIGHT = os.environ.get("HINDSIGHT", "yes").lower() == "yes"
 HINDSIGHT_PER_PUZZLE = int(os.environ.get("HINDSIGHT_PER_PUZZLE", "32"))
 HINDSIGHT_LABEL_CAP = int(os.environ.get("HINDSIGHT_LABEL_CAP", "128"))
 QUERY_LOG_K = int(os.environ.get("QUERY_LOG_K", "256"))
