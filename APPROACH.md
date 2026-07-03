@@ -118,10 +118,15 @@ flipped-backward adjacency over full-state keys. Four proposals consume it.
 
 **Wave 2 — give `h` local distance structure (small, additive to the loss,
 following the proven pattern "add structure on top of the calibrated loss"):**
-- **d. Local metric grounding.** `h(x,x)=0` anchor pairs plus a one-step
-  consistency hinge `relu(h(s_i,t) − 1 − h(s_{i+1},t))` along verified path
-  edges — Bellman self-consistency as a one-sided constraint; together they
-  telescope to path-admissibility. Targets the tail (mean), like PATH_RANK.
+- **d. Local metric grounding. ✅ TESTED — WASH, not adopted (2026-07-03).**
+  `h(x,x)=0` anchor pairs plus one-step consistency hinges (implemented
+  cost-generally via `path_edge_costs`). *3-seed result: avg 198.3/173.7/493
+  vs 198.7/155.3/513 — mean −4% (2/3) but median mixed with a big seed-1
+  regression; inside noise. Root cause confirmed live: near the regression
+  optimum with exact labels, the constraints are already satisfied (~0
+  violations on fitted paths) — the hinge adds mostly noise. Positive
+  structural corollary: the pipeline's h is already locally consistent where
+  well-fit. Flags kept, default off.*
 - **e. Hindsight query supervision.** Reservoir-sample the search's *actual*
   `(node, anchor)` h-queries; after the solve, label the sampled pairs with
   exact union-graph distances and add them to the buffer — training `h`

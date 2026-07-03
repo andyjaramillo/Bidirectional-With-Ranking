@@ -215,6 +215,21 @@ Wave-3 asymmetric-embedding proposal. **Defaults flipped** (`dir_correct=True`,
 `DIRECTED` env default yes); `DIRECTED=no` recovers the Wave-1 reference.
 Current reference: **avg 198.7 / 155.3 / 513**.
 
+## Wave 2d: local metric grounding — WASH (not adopted, kept as flags)
+
+One-step consistency hinges on verified path edges (cost-general via
+`path_edge_costs`) + `h(x,x)=0` zero-anchor pairs (`CONSIST`, `N_ZERO_PAIRS`;
+driver `consist_run.py`). 3 seeds vs reference 198.7/155.3/513:
+200/150/518 | 198/216/495 | 197/155/466 → avg 198.3/173.7/493. Mean −4% (2/3
+seeds) but median mixed with a large seed-1 regression — inside the noise
+band, far from the 3/3 adoption bar. **The judges' redundancy prediction was
+right, and verification showed why**: with exact-in-subgraph labels (post
+seam-repair) and DIRECTED semantics, models near the regression optimum
+already satisfy the consistency constraints (~0 violations on fitted paths),
+so the hinge mostly contributes gradient noise. Informative wash: the current
+pipeline's h is already locally consistent where it is well-fit. Flags remain
+available (default off).
+
 ## Fairness notes (read before trusting the numbers)
 
 **The shared goal includes the player position.** The bidirectional method's goal
