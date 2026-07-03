@@ -137,6 +137,21 @@ CONSIST = os.environ.get("CONSIST", "no").lower() == "yes"
 CONSIST_W = float(os.environ.get("CONSIST_W", "0.5"))
 CONSIST_TRIPLES = int(os.environ.get("CONSIST_TRIPLES", "16"))
 N_ZERO_PAIRS = int(os.environ.get("N_ZERO_PAIRS", "0"))
+# Hindsight supervision of the search's own h-queries (APPROACH.md Wave 2e).
+# The open list is ordered by h(frontier-node, moving-anchor) queries, yet the
+# buffer contains no pairs of that type (path x path + a few state->goal) — a
+# covariate shift measured at 1.91x |h - d| error on query pairs vs training
+# pairs (stage-0, 2026-07-03; finite fraction 20.9%). HINDSIGHT=yes: reservoir-
+# sample the queries each solve actually issues (s.log_queries), then label
+# the canonical (source -> dest) forward-frame pairs with exact DIRECTED
+# distances over the recorded union graph and add the finite ones to the
+# buffer — the pairwise analogue of hindsight experience replay: train on the
+# test distribution with ground-truth-in-hindsight labels. Default off pending
+# 3-seed validation.
+HINDSIGHT = os.environ.get("HINDSIGHT", "no").lower() == "yes"
+HINDSIGHT_PER_PUZZLE = int(os.environ.get("HINDSIGHT_PER_PUZZLE", "32"))
+HINDSIGHT_LABEL_CAP = int(os.environ.get("HINDSIGHT_LABEL_CAP", "128"))
+QUERY_LOG_K = int(os.environ.get("QUERY_LOG_K", "256"))
 # Full front-to-front: score nodes against the WHOLE opponent open frontier
 # (min over all live opponent open nodes) instead of the single temporal anchor.
 # In principle slow; applies to BOTH the training solves and the CPU twin so the
@@ -163,11 +178,103 @@ def run_search(puzzle, nn_model=None):
     s.seam_repair = SEAM_REPAIR
     s.bhffa_g = BHFFA_G
     s.dir_correct = DIRECTED
+    s.log_queries = HINDSIGHT
+    s.query_log_k = QUERY_LOG_K
     s.full_f2f = FULL_F2F
     s.anchor_strategy = ANCHOR_STRATEGY
     t0 = time.time()
     path = s.search(max_iterations=MAX_ITERS)
     return path, s, time.time() - t0
+
+
+def union_forward_adj(s):
+    """FORWARD-direction adjacency of the explored union graph over full-state
+    keys (edges_f as-is; edges_b flipped: backward u->v is forward
+    flip(v)->flip(u)). Mirror of the reverse adjacency built by
+    off_path_distance_to_goal. Unit-cost BFS consumers are the uniform-cost
+    fast path; a weighted domain would attach costs here and use Dijkstra
+    (cost-generality principle, CLAUDE.md)."""
+    fg, bg = s.forward_game, s.backward_game
+    adj, kf, kb = {}, {}, {}
+
+    def key_f(h):
+        if h not in kf:
+            kf[h] = s._full_key(fg.decodeMap(h))
+        return kf[h]
+
+    def key_b(h):
+        if h not in kb:
+            kb[h] = s._full_key(fg.flipGame(bg.decodeMap(h)))
+        return kb[h]
+
+    for u, vs in s.edges_f.items():
+        ku = key_f(u)
+        dst = adj.setdefault(ku, set())
+        for v in vs:
+            dst.add(key_f(v))
+    for ub, vsb in s.edges_b.items():
+        ku = key_b(ub)
+        for vb in vsb:
+            adj.setdefault(key_b(vb), set()).add(ku)
+    return adj
+
+
+def _bfs_forward(adj, src):
+    """Unit-cost distances from src over a forward adjacency dict."""
+    dist = {src: 0}
+    dq = deque([src])
+    while dq:
+        u = dq.popleft()
+        d = dist[u]
+        for v in adj.get(u, ()):
+            if v not in dist:
+                dist[v] = d + 1
+                dq.append(v)
+    return dist
+
+
+def collect_query_hindsight(s, buffer, rng, puzzle_id):
+    """Wave 2e: label a sample of the solve's actual h-queries with exact
+    DIRECTED distances over the explored union graph and add the finite ones
+    to the buffer. Query entries are (node_board, anchor_hash, is_backward);
+    the canonical forward-frame (source -> dest) pair follows the dir_correct
+    convention (forward side: node -> anchor; backward side: anchor -> node).
+    Returns the number of samples added."""
+    if not s.query_log:
+        return 0
+    fg, bg = s.forward_game, s.backward_game
+    root_b = next((v for v, p in s.parent_b.items() if p is None), None)
+    goal_board = fg.flipGame(bg.decodeMap(root_b)) if root_b is not None else None
+
+    canon = []
+    for nm, ah, is_b in s.query_log:
+        if is_b:
+            src_b = s.puzzle if ah is None else fg.decodeMap(ah)
+            canon.append((src_b, fg.flipGame(nm)))
+        else:
+            if ah is None and goal_board is None:
+                continue
+            dst_b = goal_board if ah is None else fg.flipGame(bg.decodeMap(ah))
+            canon.append((nm, dst_b))
+    if len(canon) > HINDSIGHT_LABEL_CAP:
+        canon = rng.sample(canon, HINDSIGHT_LABEL_CAP)
+
+    adj = union_forward_adj(s)
+    by_src = {}
+    for a, b in canon:
+        by_src.setdefault(s._full_key(a), []).append((a, b))
+    finite = []
+    for src_key, items in by_src.items():
+        dmap = _bfs_forward(adj, src_key)
+        for a, b in items:
+            dv = dmap.get(s._full_key(b))
+            if dv is not None:
+                finite.append((a, b, float(dv)))
+    if len(finite) > HINDSIGHT_PER_PUZZLE:
+        finite = rng.sample(finite, HINDSIGHT_PER_PUZZLE)
+    for a, b, dv in finite:
+        buffer.add(a, fg.target, b, dv, puzzle_id)
+    return len(finite)
 
 
 def path_edge_costs(path_boards):
@@ -347,6 +454,10 @@ def solve_and_collect(puzzle, puzzle_id, nn_model, buffer, rng):
         buffer.add(b, s.forward_game.target, b, 0.0, puzzle_id)
         n_pairs += 1
 
+    # Wave 2e: hindsight-labeled samples of the solve's own h-queries.
+    if HINDSIGHT:
+        n_pairs += collect_query_hindsight(s, buffer, rng, puzzle_id)
+
     if COLLECT_OFF_PATH:
         dist, goal_board = off_path_distance_to_goal(s)
         if dist is not None:
@@ -403,6 +514,8 @@ _pr_tag += " DIRECTED" if DIRECTED else ""
 _pr_tag += (f" +CONSIST(w={CONSIST_W},triples={CONSIST_TRIPLES})"
             if CONSIST else "")
 _pr_tag += f" zero_pairs={N_ZERO_PAIRS}" if N_ZERO_PAIRS else ""
+_pr_tag += (f" +HINDSIGHT(per={HINDSIGHT_PER_PUZZLE},cap={HINDSIGHT_LABEL_CAP})"
+            if HINDSIGHT else "")
 print(f"\n[Online] batch={BATCH_SIZE} K={UPDATES_PER_SOLVE} warmup={WARMUP} "
       f"buffer={BUFFER_CAP} loss={LOSS} reg_loss={REG_LOSS}{_pr_tag} "
       f"use_g={USE_G} train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
