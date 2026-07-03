@@ -221,8 +221,12 @@ class BidirectionalF2FSearch:
         # boards the buffer never contains). Forward-side queries unchanged.
         # NN scorers in anchor mode only (blind/analytic h is a symmetric box
         # metric; full_f2f and _pair_h untouched — non-default paths).
-        # Default off pending 3-seed validation.
-        self.dir_correct: bool = False
+        # DEFAULT on since 3-seed validation: median -10.2% and mean -12.2%
+        # vs the Wave-1 reference, better on 3/3 seeds each; the same nets
+        # under legacy queries degrade to ~220-265 median (the backward
+        # frontier was served by an out-of-distribution, direction-confused
+        # heuristic). Pair with DIRECTED labels (learning/online_run.py).
+        self.dir_correct: bool = True
 
     # ──────────────────────────────────────────────────────────────────
     # Helpers

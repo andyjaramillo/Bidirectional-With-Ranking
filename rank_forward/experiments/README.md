@@ -181,6 +181,40 @@ on-policy net adapts to it. **Defaults flipped** (`bhffa_g=True`, `BHFFA_G`
 default yes); `BHFFA_G=no` recovers the pre-1c reference. Current reference:
 **avg 199.3 / 173.0 / 584**. Wave 1 of APPROACH.md is complete.
 
+## Direction-correct labels & queries (DIRECTED) — ADOPTED AS DEFAULT
+
+State-space distance under irreversible moves is a **quasimetric**; the
+pipeline symmetrized it by fiat (reverse pairs — half of all training data —
+labeled with the forward `j-i`; the 1b diagnostic measured 35.4% of verifiable
+reverse labels wrong, mean +2.9). `DIRECTED` fixes both halves: labels
+(direction-correct pairs only, random budget 2L→4L, measured throughput ~2/3
+of legacy — ordered-pair space is half; mirrored off-path insertion dropped)
+and queries (the backward frontier asks for the forward-dynamics distance it
+actually needs: `h(anchor_fwd, forward_target, flip(node))`, all forward-frame
+— legacy queries passed backward-frame boards the buffer never contains).
+Driver: `directed_run.py`.
+
+**3 seeds, trained+evaled DIRECTED, held-out 200 (solved/median/mean):**
+
+| seed | Wave-1 reference | DIRECTED | same net, legacy queries |
+|---|---|---|---|
+| 0 | 199 / 190 / 684 | 199 / 172 / 562 | 200 / 265.5 / 647 |
+| 1 | 199 / 151 / 508 | 198 / 138 / 481 | 200 / 218.5 / 563 |
+| 2 | 200 / 178 / 561 | 199 / 156 / 496 | 199 / 235.0 / 487 |
+| **avg** | 199.3 / 173.0 / 584 | **198.7 / 155.3 / 513** | — |
+
+Verdict: **median −10.2% and mean −12.2%, better on 3/3 seeds each** — the
+largest single-change improvement of the roadmap; solve rate within noise
+(596 vs 598/600); plans shorter (~33.3 vs ~34.4 mean moves); training loss
+floor drops from ~12–20 to ~5–8 (the corrupted reverse labels were a large
+part of the irreducible regression error). The legacy-query decomposition arms
+(~220–265 median with the same nets) confirm the mechanism: the backward
+frontier had been served by an out-of-distribution, direction-confused
+heuristic. This empirically validates the quasimetric premise underlying the
+Wave-3 asymmetric-embedding proposal. **Defaults flipped** (`dir_correct=True`,
+`DIRECTED` env default yes); `DIRECTED=no` recovers the Wave-1 reference.
+Current reference: **avg 198.7 / 155.3 / 513**.
+
 ## Fairness notes (read before trusting the numbers)
 
 **The shared goal includes the player position.** The bidirectional method's goal

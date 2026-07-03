@@ -129,6 +129,18 @@ following the proven pattern "add structure on top of the calibrated loss"):**
 - *(f. conditional: pinball/quantile loss for upper-bound labels — only if
   Stage 0 shows residual slack that 1b cannot remove.)*
 
+**Interlude — direction-correct labels & queries. ✅ DONE, ADOPTED
+(2026-07-03).** Pulled forward from the Wave-3 prerequisite after the 1b
+diagnostic opened its gate. Labels: direction-correct pairs only; queries: the
+backward frontier asks `h(anchor_fwd, target_fwd, flip(node))` — the
+forward-dynamics distance it actually needs, all forward-frame. *3-seed
+result: median −10.2% and mean −12.2% vs the Wave-1 reference, better on 3/3
+seeds each — the largest single-change win of the roadmap; legacy-query
+decomposition arms (~220–265 median, same nets) prove the backward frontier
+had been served by an out-of-distribution, direction-confused heuristic.
+Defaults flipped. Current reference: avg 198.7 / 155.3 / 513. The quasimetric
+premise of Wave 3g is now empirically validated twice over.*
+
 **Wave 3 — the architectural bet (medium/large):**
 - **g. Factorized (quasi)metric embedding.** `h(x,y) = d(φ(x), φ(y))` with a
   metric or quasimetric head (e.g. asymmetric/interval embeddings if the

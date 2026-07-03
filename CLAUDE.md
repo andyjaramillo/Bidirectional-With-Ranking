@@ -22,8 +22,12 @@
   `MEET_ON_GENERATE=no SEAM_REPAIR=no` recovers the legacy reference.
 - **Scoring: `bhffa_g=True`** (Wave 1c, default since its 3-seed validation) —
   BHFFA-complete `f(n) = g(n) + h(n,d*) + g_opp(d*)`; `BHFFA_G=no` recovers pre-1c.
+- **Direction-correct labels & queries: `dir_correct=True` / `DIRECTED`** (default since
+  its 3-seed validation; the quasimetric fix) — direction-correct pair labels, and the
+  backward frontier queries `h(anchor_fwd, target_fwd, flip(node))` in the forward frame;
+  `DIRECTED=no` recovers the Wave-1 reference.
 - Stored 3-seed reference numbers live in `rank_forward/experiments/README.md`
-  (current reference: avg 199.3 solved / 173.0 median / 584 mean on the held-out 200).
+  (current reference: avg 198.7 solved / 155.3 median / 513 mean on the held-out 200).
 
 ## Data
 - Default benchmark is the **solvable-only** dataset `data/solvable10_3box.txt`

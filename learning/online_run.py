@@ -117,8 +117,9 @@ BHFFA_G = os.environ.get("BHFFA_G", "yes").lower() == "yes"
 # a known, documented secondary confound; (2) drop the mirrored (goal, state)
 # off-path insertion (that direction's label is unknown); (3) the backward
 # frontier queries h in the direction it actually needs (s.dir_correct; see
-# search class docs). Default off pending 3-seed validation.
-DIRECTED = os.environ.get("DIRECTED", "no").lower() == "yes"
+# search class docs). DEFAULT on since 3-seed validation: median -10.2%,
+# mean -12.2% vs the Wave-1 reference, better on 3/3 seeds each.
+DIRECTED = os.environ.get("DIRECTED", "yes").lower() == "yes"
 # Full front-to-front: score nodes against the WHOLE opponent open frontier
 # (min over all live opponent open nodes) instead of the single temporal anchor.
 # In principle slow; applies to BOTH the training solves and the CPU twin so the
