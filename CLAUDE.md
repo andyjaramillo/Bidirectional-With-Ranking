@@ -37,6 +37,12 @@
   (Adopted despite narrowly missing the strict per-seed-regression bar — a mean/tail win;
   median is a wash. Caveats in experiments/README.md.)
 - **Wave 2d `CONSIST` was tested and NOT adopted (wash).** Available as a flag, default off.
+- **Wave 3 factorized (quasi)metric embedding (`MODEL=embed`) was tested and REJECTED.**
+  Head-selection gate (seed 0): best head (`mlp`) is 3.3× worse on expansions and 1.5×
+  slower than the `smallcnn` cross-encoder baseline; ℓ1/quasi worse still. Root cause is a
+  bi-encoder representational ceiling (see APPROACH.md Wave 3). `EmbedCNN` + the embedding
+  search branch are preserved off by default (`MODEL=smallcnn`); the deferred soft-min
+  full-F2F arm was abandoned with it. Do not re-attempt on a bi-encoder substrate.
 - Stored reference numbers live in `rank_forward/experiments/README.md`
   (current reference: avg 199.2 solved / 148.5 median / 453.5 mean on the held-out 200, 5 seeds).
 

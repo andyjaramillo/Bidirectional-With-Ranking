@@ -153,16 +153,51 @@ had been served by an out-of-distribution, direction-confused heuristic.
 Defaults flipped. Current reference: avg 198.7 / 155.3 / 513. The quasimetric
 premise of Wave 3g is now empirically validated twice over.*
 
-**Wave 3 — the architectural bet (medium/large):**
+**Wave 3 — the architectural bet (medium/large): TRIED & REJECTED (2026-07-04).**
 - **g. Factorized (quasi)metric embedding.** `h(x,y) = d(φ(x), φ(y))` with a
   metric or quasimetric head (e.g. asymmetric/interval embeddings if the
-  Stage-0 asymmetry rate is material). Buys, by construction: `h(x,x)=0`,
-  triangle inequality, and **O(1) per-anchor rescoring** — one embedding per
-  node, cheap distances — which finally makes *principled full
-  front-to-front* (min or soft-min over the whole opposing frontier)
-  computationally feasible. Ablation lattice: {ℓ1 / quasimetric / unconstrained
-  MLP head} × {point-anchor / full-frontier}. Run only after Waves 1–2, and
-  only with the direction-correctness prerequisite from Stage 0.
+  Stage-0 asymmetry rate is material). *Intended* to buy, by construction:
+  `h(x,x)=0`, triangle inequality, and **O(1) per-anchor rescoring** — one
+  embedding per node, cheap distances — which would finally make *principled
+  full front-to-front* (min or soft-min over the whole opposing frontier)
+  computationally feasible. Implemented as `EmbedCNN` (`learning/nn.py`) +
+  the embedding branch in `AI_Bidirectional` (both preserved, off by default,
+  `MODEL=smallcnn`; guarded to require `DIRECTED`). Axioms verified exact by
+  construction; O(k) cache verified.
+
+  **Result — head-selection gate (seed 0, N_train=1800, eval=200, matched
+  config), decisive loss on every axis:**
+
+  | model | head | solved | median exp | mean exp | ms/solve |
+  |---|---|---:|---:|---:|---:|
+  | **smallcnn** (cross-encoder, baseline) | — | **200/200** | **118** | **452.7** | **257** |
+  | embed | quasi | 195/200 | 511 | 1171.7 | 492 |
+  | embed | ℓ1    | 193/200 | 567 | 1220.8 | 592 |
+  | embed | mlp   | 197/200 | 386 |  807.7 | 385 |
+
+  The best embedding head (`mlp`) is **3.3× worse on expansions** and **1.5×
+  slower**. The adoption bar (expansions non-inferior AND wall drops, OR metric
+  head beats mean 3/3) misses both clauses badly, so no 3-seed confirmation was
+  run (same-seed run-to-run spread ~118↔155 median cannot close a 118↔386 gap).
+
+  **Mechanism (why it's a real ceiling, not a bug):** the ordering
+  `quasi < ℓ1 < mlp` tracks head expressiveness exactly — parameter-free
+  distances lose most, the learned interaction (`mlp` on `[U,V,|U−V|,U·V]`)
+  loses least — so we hit the **representational ceiling of a bi-encoder**.
+  `smallcnn` is a **cross-encoder**: it convolves *both* boards jointly and
+  models their interaction directly; the embedding scores each board to ℝᵏ
+  *independently* then applies a fixed distance, which is strictly less
+  expressive and worth ~3× here for "distance from X to Y under Sokoban
+  dynamics." The **O(k) speed premise never materialized** — every head was
+  *slower*, because the expansion blowup dominates wall time and per-board
+  `_embed` (conv tower + fc) is not cheaper than the smallcnn pass.
+
+  **Consequence for the deferred soft-min full-F2F arm (Stage D): abandoned.**
+  Its whole motivation was to exploit the all-pairs `dist_matrix` the
+  factorization unlocks, but full-F2F changes *which* anchor pair is scored, not
+  the representation quality that just proved 3.3× weaker. It cannot rescue the
+  deficit, so it was not built. The principled-full-F2F goal remains open but
+  needs a substrate other than a bi-encoder (see below).
 
 **Explicitly not pursuing** (dead ends / unprincipled): more anchor-selection
 variants; brute-force full-F2F with the monolithic net; ranking-only losses;
@@ -189,9 +224,18 @@ Dijkstra-/cost-generalizable, none conceptually unit-bound):
 
 ## 5. Why this is the elegant path
 
-Every item either (i) replaces a biased surrogate with the exact quantity the
-search semantically needs (1a, 1b, 2e), (ii) restores a term or constraint the
-theory says should be there (1c, 2d, 3g), or (iii) converts a previously
-infeasible principled computation into a feasible one via factorization (3g).
-Nothing exploits Sokoban structure; every mechanism consumes only states,
-transitions, recorded search graphs, and `h`.
+Every *adopted* item either (i) replaces a biased surrogate with the exact
+quantity the search semantically needs (1a, 1b, 2e), or (ii) restores a term or
+constraint the theory says should be there (1c, 2d). Nothing exploits Sokoban
+structure; every mechanism consumes only states, transitions, recorded search
+graphs, and `h`.
+
+The one item that was *principled but empirically wrong* is 3g: the
+factorization was meant to convert the infeasible full-F2F computation into a
+feasible one, but the factorized representation is 3.3× weaker than the
+monolithic cross-encoder (see Wave 3 result), so the feasibility win is moot.
+Lesson recorded: for an F2F heuristic, the joint (cross-encoder) view of the two
+boards carries real signal that a bi-encoder embedding cannot recover — a
+future principled-full-F2F attempt should either keep a cross-encoder scorer
+(and attack feasibility another way, e.g. batched/pruned frontier scoring) or
+find a factorized family that preserves cross-board interaction.

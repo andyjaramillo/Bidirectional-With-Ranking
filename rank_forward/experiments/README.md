@@ -262,6 +262,38 @@ samples/puzzle dilute the fixed 20k FIFO buffer; ~21% query finite-fraction.
 `HINDSIGHT=no` recovers the pre-2e reference. **New reference: avg
 199.2 / 148.5 / 453.5.**
 
+## Wave 3: factorized (quasi)metric embedding (MODEL=embed) — REJECTED
+
+`h(x,y) = d(φ(x), φ(y))` — score each board to ℝ⁶⁴ independently, then a
+metric/quasimetric distance. Meant to buy `h(x,x)=0`, triangle inequality, and
+O(k) per-anchor rescoring (→ feasible principled full-F2F). `EmbedCNN`
+(`learning/nn.py`) + embedding branch in `AI_Bidirectional`; guarded to require
+`DIRECTED`. Driver: `embed_run.py` (reports expansions AND wall-time). Axioms
+verified exact by construction; O(k) cache verified.
+
+**Head-selection gate — seed 0, N_train=1800, eval=200, matched default config
+(meet-on-generate + seam-repair + bhffa_g + DIRECTED + HINDSIGHT). Blind
+baseline identical across rows (194/200, median 597), confirming same eval set:**
+
+| model | head | solved | median exp | mean exp | len_mean | ms/solve |
+|---|---|---:|---:|---:|---:|---:|
+| **smallcnn** (cross-encoder) | — | **200/200** | **118** | **452.7** | 33.71 | **257** |
+| embed | quasi | 195/200 | 511 | 1171.7 | 33.39 | 492 |
+| embed | ℓ1    | 193/200 | 567 | 1220.8 | 33.17 | 592 |
+| embed | mlp   | 197/200 | 386 |  807.7 | 33.99 | 385 |
+
+**Verdict: REJECTED.** Best head (`mlp`) is 3.3× worse on median expansions and
+1.5× slower; ℓ1/quasi worse still. Adoption bar (expansions non-inferior AND
+wall drops, OR metric head beats mean 3/3) missed on both clauses, so no 3-seed
+confirmation (same-seed spread ~118↔155 median cannot close a 118↔386 gap).
+Mechanism: head ordering `quasi < ℓ1 < mlp` tracks expressiveness → **bi-encoder
+representational ceiling**; `smallcnn` is a cross-encoder (convolves both boards
+jointly), worth ~3× for pairwise Sokoban distance. The O(k) speed premise never
+materialized (all heads slower — expansion blowup dominates wall time). The
+deferred soft-min full-F2F arm (Stage D) was **abandoned** with it: full-F2F
+changes which anchor pair is scored, not the representation quality. Code kept
+off by default (`MODEL=smallcnn`); do not re-attempt on a bi-encoder substrate.
+
 ## Fairness notes (read before trusting the numbers)
 
 **The shared goal includes the player position.** The bidirectional method's goal

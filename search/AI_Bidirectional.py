@@ -55,6 +55,14 @@ class BidirectionalF2FSearch:
         self.game_name = "Sokoban"
         self.puzzle = puzzle
         self.nn = nn
+        # Factorized (quasi)metric heuristic? If so, h(x,y)=dist(phi(x),phi(y))
+        # with each state embedded ONCE and cached per solve — re-scoring a node
+        # against a new anchor is an O(k) vector op, not a conv pass. Embeddings
+        # are of the FORWARD-frame board, keyed by (is_backward_frame, hash);
+        # queries use the DIRECTED forward-frame (source->dest) convention
+        # (this path assumes dir_correct semantics, the default).
+        self._emb = nn if (nn is not None and hasattr(nn, "embed_batch")) else None
+        self._emb_cache: Dict[Tuple[bool, Optional[str]], "object"] = {}
 
         # ── Game instances ─────────────────────────────────────────────
         self.forward_game = SokobanGame(puzzle, isBackward=False)
@@ -328,6 +336,24 @@ class BidirectionalF2FSearch:
         cache[opp_anchor_hash] = board
         return board
 
+    def _emb_of(self, is_bwd_frame: bool, h: Optional[str]):
+        """Cached embedding phi of the FORWARD-frame board for (frame, hash).
+        Computed once per solve; the workhorse of O(k) rescoring / full-F2F."""
+        key = (is_bwd_frame, h)
+        e = self._emb_cache.get(key)
+        if e is not None:
+            return e
+        if h is None:                       # degenerate (anchors set at init)
+            board = (self.forward_game.flipGame(self.backward_game.puzzle)
+                     if is_bwd_frame else self.puzzle)
+        elif is_bwd_frame:
+            board = self.forward_game.flipGame(self.backward_game.decodeMap(h))
+        else:
+            board = self.forward_game.decodeMap(h)
+        e = self._emb.embed_batch([board], [self.forward_game.target])[0]
+        self._emb_cache[key] = e
+        return e
+
     def _f_score_nn(self, node_hash: str, g: int, opp_anchor_hash: Optional[str],
                  active_game: SokobanGame, opp_game: SokobanGame,
                  opp_g: float = 0.0) -> float:
@@ -339,10 +365,22 @@ class BidirectionalF2FSearch:
         backward node actually needs (see the dir_correct field docs).
         """
         import torch
-        node_map = active_game.decodeMap(node_hash)
         if self.log_queries:
-            self._log_query(node_map, opp_anchor_hash,
+            self._log_query(active_game.decodeMap(node_hash), opp_anchor_hash,
                             active_game is self.backward_game)
+        if self._emb is not None:
+            # Factorized: h = dist(phi(source), phi(dest)) on cached embeddings,
+            # forward-frame (source->dest) per the DIRECTED convention.
+            if active_game is self.forward_game:
+                src = self._emb_of(False, node_hash)          # forward node
+                dst = self._emb_of(True, opp_anchor_hash)     # backward anchor
+            else:
+                src = self._emb_of(False, opp_anchor_hash)    # forward anchor
+                dst = self._emb_of(True, node_hash)           # backward node
+            h = max(0.0, float(self._emb.dist(src.unsqueeze(0),
+                                              dst.unsqueeze(0)).item()))
+            return float(((g + h) if self.use_g_in_f else h) + opp_g)
+        node_map = active_game.decodeMap(node_hash)
         if self.dir_correct and active_game is self.backward_game:
             src = self._dir_source(opp_anchor_hash)
             node_f = self.forward_game.flipGame(node_map)
@@ -357,7 +395,7 @@ class BidirectionalF2FSearch:
 
     def _f_score_nn_batch(self, node_maps, g_list, opp_anchor_hash: Optional[str],
                           active_game: SokobanGame, opp_game: SokobanGame,
-                          opp_g: float = 0.0):
+                          opp_g: float = 0.0, node_hashes=None):
         """Batched f-score for several nodes scored against ONE anchor.
 
         Axis-1 within-node batching: the survivors of a single expansion are
@@ -376,6 +414,29 @@ class BidirectionalF2FSearch:
             is_b = active_game is self.backward_game
             for nm in node_maps:
                 self._log_query(nm, opp_anchor_hash, is_b)
+        if self._emb is not None:
+            # Factorized: embed the fresh survivors ONCE (forward frame) and
+            # cache by (frame, hash) so later lazy re-eval is O(k); score
+            # against the (cached) anchor embedding via dist. DIRECTED convention.
+            is_bwd = active_game is self.backward_game
+            boards_fwd = ([self.forward_game.flipGame(nm) for nm in node_maps]
+                          if is_bwd else node_maps)
+            node_e = self._emb.embed_batch(boards_fwd, [self.forward_game.target] * n)
+            if node_hashes is not None:
+                for hsh, e in zip(node_hashes, node_e):
+                    self._emb_cache[(is_bwd, hsh)] = e
+            if is_bwd:                                    # d(anchor -> node)
+                anch = self._emb_of(False, opp_anchor_hash)
+                d = self._emb.dist(anch.unsqueeze(0).expand(n, -1), node_e)
+            else:                                         # d(node -> anchor)
+                anch = self._emb_of(True, opp_anchor_hash)
+                d = self._emb.dist(node_e, anch.unsqueeze(0).expand(n, -1))
+            h = d.clamp_min(0.0)
+            if self.use_g_in_f:
+                h = h + torch.tensor(g_list, dtype=h.dtype, device=h.device)
+            if opp_g:
+                h = h + opp_g
+            return h.tolist()
         if self.dir_correct and active_game is self.backward_game:
             # DIRECTED backward side: swapped arguments, forward frame.
             src = self._dir_source(opp_anchor_hash)
@@ -815,7 +876,8 @@ class BidirectionalF2FSearch:
             f_scores = self._f_score_nn_batch(
                 [vm for _, _, vm in survivors],
                 [ng for _, ng, _ in survivors],
-                opp_anchor, game, opp_game, opp_g=opp_anchor_g)
+                opp_anchor, game, opp_game, opp_g=opp_anchor_g,
+                node_hashes=[vh for vh, _, _ in survivors])
             for (v_hash, new_g, _), v_f in zip(survivors, f_scores):
                 self._push(heap, v_f, new_g, v_hash)
         else:
