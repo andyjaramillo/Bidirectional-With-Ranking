@@ -349,6 +349,30 @@ easy pool, solves 200/200 hard instances at 4.3× fewer expansions than blind**
 training difficulty. Hard-set reference (seed 0, cap 50k): blind
 200/12469.5/13932.8; base 200/2887/3730.
 
+### Forward (Chrestien) baseline on hard200 — head-to-head (2026-07-09)
+
+`forward_hard.py`: canonical forward baselines (L\*, L_gbfs; SmallCNN; optimal
+labels from the full-goal cache; same 1800-board train prefix; seed 0),
+evaluated under the fair FULL GOAL on both eval sets. Standard-set rows
+replicate the stored headline (forward L\*/A\* 196/200, median 114, mean 740
+vs base 200/200 / 146 / 465.2). Hard200 (cap 50k; medians/means over solved;
+"budget-inclusive" counts failures at their spent 50k):
+
+| method | solved | median | mean (solved) | budget-incl. mean |
+|---|---:|---:|---:|---:|
+| fwd blind A\* | 5/200 | (37686) | (35085) | ~49.6k |
+| fwd L\*/A\* | 193/200 | **2100** | 5435.5 | ~6995 |
+| fwd L_gbfs/GBFS | 183/200 | 4573 | 9368.0 | ~12822 |
+| bidir blind | 200/200 | 12469.5 | 13932.8 | 13932.8 |
+| **base (bidir)** | **200/200** | 2887 | **3730.0** | **3730.0** |
+
+**Reading:** the standard-set pattern amplifies on hard instances. Forward
+L\*/A\* is ~27% faster on the median instance; the bidirectional reference is
+decisively more robust — perfect solve rate (forward fails 7/200 at cap) and
+~1.9× lower budget-inclusive mean. Bidirectionality itself carries most of the
+blind-search win (bidir blind 200/200 vs forward blind 5/200 under the full
+goal). Forward checkpoints saved via `MODEL_OUT` (default `/tmp/fwd_models`).
+
 ## Fairness notes (read before trusting the numbers)
 
 **The shared goal includes the player position.** The bidirectional method's goal
