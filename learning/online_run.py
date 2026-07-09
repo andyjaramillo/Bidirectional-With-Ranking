@@ -173,6 +173,28 @@ HINDSIGHT = os.environ.get("HINDSIGHT", "yes").lower() == "yes"
 HINDSIGHT_PER_PUZZLE = int(os.environ.get("HINDSIGHT_PER_PUZZLE", "32"))
 HINDSIGHT_LABEL_CAP = int(os.environ.get("HINDSIGHT_LABEL_CAP", "128"))
 QUERY_LOG_K = int(os.environ.get("QUERY_LOG_K", "256"))
+# Reverse-walk pair generation (REVWALK): self-generated LONG-RANGE
+# supervision. Every finite label in the buffer today is bounded by solved-path
+# lengths / explored-subgraph distances on instances the solver already cracks,
+# yet the open list is ordered by h at long range early in the search, where no
+# labels exist and the net extrapolates blindly. REVWALK random-walks the
+# BACKWARD game from its root (k pulls); any backward trajectory reversed is a
+# valid forward path (the same fact that makes flipped edges_b forward edges in
+# union_forward_adj), so cumulative reversed edge costs — read from the
+# path_edge_costs hook, cost-general — are sound upper-bound labels for
+# DIRECTED (deeper -> shallower) forward-frame pairs at ranges no solve
+# reaches. Upper-bound labels follow the adopted HINDSIGHT precedent;
+# first-visit dedup tightens them within each walk. Works on FAILED solves too
+# (which contribute nothing today) and needs only the reverse transition
+# function + the cost hook (domain-agnostic; DeepCubeA-style generation,
+# adapted to pairwise h). Walk length follows a linear curriculum
+# REVWALK_LEN_MIN -> REVWALK_LEN over the first REVWALK_CURR_FRAC of the run.
+REVWALK = os.environ.get("REVWALK", "no").lower() == "yes"
+REVWALK_WALKS = int(os.environ.get("REVWALK_WALKS", "4"))
+REVWALK_LEN = int(os.environ.get("REVWALK_LEN", "64"))
+REVWALK_LEN_MIN = int(os.environ.get("REVWALK_LEN_MIN", "8"))
+REVWALK_PAIRS = int(os.environ.get("REVWALK_PAIRS", "64"))
+REVWALK_CURR_FRAC = float(os.environ.get("REVWALK_CURR_FRAC", "0.5"))
 # Full front-to-front: score nodes against the WHOLE opponent open frontier
 # (min over all live opponent open nodes) instead of the single temporal anchor.
 # In principle slow; applies to BOTH the training solves and the CPU twin so the
@@ -304,6 +326,85 @@ def path_edge_costs(path_boards):
     unit-cost; on a weighted domain, replace with the real cost function.
     Returns a list of length len(path_boards) - 1."""
     return [1.0] * (len(path_boards) - 1)
+
+
+def revwalk_len_at(n):
+    """REVWALK linear length curriculum: max walk length grows from
+    REVWALK_LEN_MIN to REVWALK_LEN over the first REVWALK_CURR_FRAC of the
+    run, then stays at REVWALK_LEN."""
+    horizon = max(1, int(REVWALK_CURR_FRAC * N_TOTAL))
+    frac = min(1.0, n / horizon)
+    return int(round(REVWALK_LEN_MIN + frac * (REVWALK_LEN - REVWALK_LEN_MIN)))
+
+
+def collect_reverse_walk_pairs(s, buffer, rng, puzzle_id, k_max):
+    """REVWALK: mine DIRECTED forward-frame pairs from random reverse walks.
+
+    Each walk starts at the backward search's own root (s.backward_game.puzzle
+    — the goal configuration, so every visited state lives exactly in the
+    space the backward frontier queries) and takes up to ``k_max`` uniformly
+    random valid backward moves. Reversed, the walk is a valid forward path,
+    so for walk depths i > j the forward cost of the segment i -> j (summed
+    via the path_edge_costs hook) is a sound upper bound on
+    d(state_i -> state_j). First-visit dedup drops revisited states, keeping
+    the tightest label the walk supports. Per walk, the extreme
+    (deepest -> root) pair is always added plus random (i > j) pairs up to the
+    shared REVWALK_PAIRS budget. Runs whether or not the solve succeeded.
+    Returns the number of entries added."""
+    fg, bg = s.forward_game, s.backward_game
+    per_walk = max(2, REVWALK_PAIRS // max(1, REVWALK_WALKS))
+    added = 0
+    for _ in range(REVWALK_WALKS):
+        # ── simulate one backward walk ─────────────────────────────────
+        seq_b = [np.array(bg.puzzle, copy=True)]
+        for _step in range(k_max):
+            board = seq_b[-1]
+            ploc = bg.getPlayerLocation(board)
+            cands = []
+            for _dir, action in bg.availableStates(ploc):
+                nb = action.moveAndUpdateBoard(ploc, board)
+                if nb is not None:
+                    cands.append(nb)
+            if not cands:
+                break
+            seq_b.append(cands[rng.randrange(len(cands))])
+        if len(seq_b) < 2:
+            continue
+
+        # ── forward-frame costs: the reversed walk is a forward path ───
+        seq_f = [fg.flipGame(b) for b in seq_b]
+        ec = path_edge_costs(seq_f[::-1])   # forward edges, deepest -> root
+        L = len(seq_f) - 1
+        # cost_to_root[d] = forward cost of the walk segment depth d -> 0
+        # (suffix sums of ec; ec[t] is the edge depth L-t -> L-t-1).
+        cost_to_root = [0.0] * (L + 1)
+        for d in range(1, L + 1):
+            cost_to_root[d] = cost_to_root[d - 1] + ec[L - d]
+
+        # ── first-visit dedup (tightest in-walk label per state) ───────
+        kept, seen_h = [], set()
+        for d, bb in enumerate(seq_b):
+            hb = bg.encodeMap(bb)
+            if hb in seen_h:
+                continue
+            seen_h.add(hb)
+            kept.append(d)
+        if len(kept) < 2:
+            continue
+
+        # ── pairs: extreme (deepest -> root) + random (i > j) ──────────
+        picks = [(len(kept) - 1, 0)]
+        for _ in range(per_walk - 1):
+            a = rng.randrange(1, len(kept))
+            picks.append((a, rng.randrange(a)))
+        for a, b in picks:
+            da, db = kept[a], kept[b]
+            lab = cost_to_root[da] - cost_to_root[db]
+            if lab <= 0:
+                continue
+            buffer.add(seq_f[da], fg.target, seq_f[db], lab, puzzle_id)
+            added += 1
+    return added
 
 
 def path_consistency_loss(model, path_boards, target, rng, n_triples,
@@ -537,6 +638,9 @@ _pr_tag += (f" +CONSIST(w={CONSIST_W},triples={CONSIST_TRIPLES})"
 _pr_tag += f" zero_pairs={N_ZERO_PAIRS}" if N_ZERO_PAIRS else ""
 _pr_tag += (f" +HINDSIGHT(per={HINDSIGHT_PER_PUZZLE},cap={HINDSIGHT_LABEL_CAP})"
             if HINDSIGHT else "")
+_pr_tag += (f" +REVWALK(walks={REVWALK_WALKS},len={REVWALK_LEN_MIN}->"
+            f"{REVWALK_LEN},pairs={REVWALK_PAIRS},curr={REVWALK_CURR_FRAC})"
+            if REVWALK else "")
 print(f"\n[Online] batch={BATCH_SIZE} K={UPDATES_PER_SOLVE} warmup={WARMUP} "
       f"buffer={BUFFER_CAP} loss={LOSS} reg_loss={REG_LOSS}{_pr_tag} "
       f"use_g={USE_G} train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
@@ -587,6 +691,11 @@ for n, p in enumerate(puzzles):
 
     path, s, dt, n_pairs, n_off = solve_and_collect(
         p, n, search_model if use_nn else None, buffer, _rng)
+    # REVWALK is independent of solve success (failed solves contribute
+    # nothing otherwise). Kept out of n_pairs so re-mine eligibility (`seen`)
+    # still means "contributed solve-mined pairs".
+    if REVWALK:
+        collect_reverse_walk_pairs(s, buffer, _rng, n, revwalk_len_at(n))
     if path:
         offpath_added.append(n_off)
     solve_iters = s.first_meeting_iter if s.first_meeting_iter is not None else s.iteration
@@ -664,7 +773,14 @@ for n, p in enumerate(puzzles):
         else:
             old_idx = seen.popleft()
         buffer.remove_by_tag(old_idx)
-        solve_and_collect(puzzles[old_idx], old_idx, search_model, buffer, _rng)
+        _, s_rm, _, _, _ = solve_and_collect(
+            puzzles[old_idx], old_idx, search_model, buffer, _rng)
+        # remove_by_tag also dropped the puzzle's REVWALK pairs — regenerate
+        # them (at the current curriculum length) so buffer composition stays
+        # stable across re-mines.
+        if REVWALK:
+            collect_reverse_walk_pairs(s_rm, buffer, _rng, old_idx,
+                                       revwalk_len_at(n))
         seen.append(old_idx)
         remine_count += 1
 

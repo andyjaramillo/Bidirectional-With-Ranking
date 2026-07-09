@@ -81,6 +81,36 @@ def get_solvable_data(limit=None):
     return boards
 
 
+def get_hard_eval_data(keep=200, limit=None):
+    """Load the HARD held-out eval set produced by
+    ``analysis/build_hard_eval.py`` (hardest-by-blind-search-cost tail of the
+    solvable pool, disjoint from the train/eval slices). Same return type as
+    ``get_data``.
+
+    Args:
+        keep (int): which hard set to load (matches the builder's HARD_KEEP).
+        limit (int|None): keep only the first ``limit`` boards.
+
+    Returns:
+        list[np.ndarray]: hard solvable 10x10 boards.
+    """
+    path = os.path.join(_DATA_DIR, f"solvable10_3box_hard{keep}.txt")
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"{path} not found. Build it first:\n"
+            f"    PYTHONPATH=. python analysis/build_hard_eval.py")
+    boards = []
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            boards.append(np.reshape(np.asarray([int(x) for x in line.split()]), (10, 10)))
+            if limit is not None and len(boards) >= limit:
+                break
+    return boards
+
+
 def get_paths():
     """
     Load paths from a text file.

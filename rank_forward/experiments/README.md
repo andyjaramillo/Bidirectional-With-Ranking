@@ -294,6 +294,61 @@ deferred soft-min full-F2F arm (Stage D) was **abandoned** with it: full-F2F
 changes which anchor pair is scored, not the representation quality. Code kept
 off by default (`MODEL=smallcnn`); do not re-attempt on a bi-encoder substrate.
 
+## REVWALK: reverse-walk long-range pair generation — REJECTED (2026-07-09)
+
+Hypothesis: every finite buffer label is short-range (bounded by solved-path /
+explored-subgraph distances on instances the solver already cracks), while the
+open list is ordered by h at long range early in each search — so self-generated
+long-range labels should improve early ordering. Mechanism: random walks in the
+backward game from its root (any backward trajectory reversed is a valid
+forward path, so cumulative reversed edge costs — via the `path_edge_costs`
+hook — are sound upper-bound labels); first-visit dedup; linear length
+curriculum 8→64; ~64 pairs/puzzle; runs on failed solves too. Soundness was
+machine-verified (all reversed walk edges valid forward moves; exact-BFS check
+label ≥ true distance on all sampled pairs). Implementation: `REVWALK*` knobs +
+`collect_reverse_walk_pairs` in `learning/online_run.py`; driver
+`revwalk_run.py` (saves checkpoints to `MODEL_OUT` — on-policy training is not
+run-to-run reproducible, so downstream evals must load the gated model).
+
+**Seed-0 gate, matched arms, standard held-out 200 AND the hard200 set:**
+
+| arm | standard: solved/median/mean | hard200 (cap 50k): solved/median/mean |
+|---|---|---|
+| blind | 194 / 597 / 1313 | 200 / 12469.5 / 13932.8 |
+| **base** | **200 / 146 / 465.2** | **200 / 2887 / 3730.0** |
+| revwalk | 200 / 189.5 / 599.4 | 200 / 3695 / 4658.1 |
+
+**Verdict: REJECTED.** Worse on BOTH eval sets (+30%/+29% median/mean standard,
++28%/+25% hard). The long-range hypothesis specifically predicted the hard set
+(plans 40–90) would favor it; it did not — a same-direction 25–30% loss on two
+disjoint sets needs no 3-seed confirmation. Root cause (post-hoc): raw
+walk-length labels are LOOSE upper bounds — a 64-pull random walk wanders and
+typically ends far fewer true moves from the root than its cost, so long-range
+labels carry large state-dependent inflation. HINDSIGHT's upper bounds are
+subgraph-SHORTEST distances (tight); walk labels are single-trajectory costs.
+DeepCubeA-style generation works via bootstrapped Bellman targets, not raw walk
+lengths — a future bootstrapping arm (TD targets over generated states /
+recorded graphs) is the principled fix and remains open. Flag default is
+`REVWALK=no`; the reference configuration is unchanged.
+
+## Hard held-out benchmark (hard200) — ADOPTED as secondary eval (2026-07-09)
+
+The standard held-out 200 is near saturation (200/200 solved, median ~118–146,
+same-seed noise band ~118↔155), hiding modest real effects.
+`analysis/build_hard_eval.py` ranks the untouched solvable-pool tail (indices
+2000–9999, disjoint from train/eval) by a domain-agnostic difficulty measure —
+deterministic blind-search expansions — and keeps the hardest 200
+(`data/solvable10_3box_hard200.txt`, loader `get_hard_eval_data()`; blind
+expansions 8.7k–41k, median 12.5k; blind plans 40–90, median 60). Evaluate
+saved checkpoints with `rank_forward/experiments/hard_eval.py`
+(`EVAL_MAX_ITERS=50000` so blind solve rates stay meaningful).
+
+**Generalization result (seed 0): the reference model, trained only on the
+easy pool, solves 200/200 hard instances at 4.3× fewer expansions than blind**
+(2887 vs 12469.5 median) — the learned stack extrapolates well beyond its
+training difficulty. Hard-set reference (seed 0, cap 50k): blind
+200/12469.5/13932.8; base 200/2887/3730.
+
 ## Fairness notes (read before trusting the numbers)
 
 **The shared goal includes the player position.** The bidirectional method's goal

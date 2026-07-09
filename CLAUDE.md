@@ -37,6 +37,12 @@
   (Adopted despite narrowly missing the strict per-seed-regression bar — a mean/tail win;
   median is a wash. Caveats in experiments/README.md.)
 - **Wave 2d `CONSIST` was tested and NOT adopted (wash).** Available as a flag, default off.
+- **REVWALK (reverse-walk long-range pair generation, `REVWALK=yes`) was tested and
+  REJECTED (2026-07-09).** Sound-by-construction walk labels, but raw walk-length upper
+  bounds are too loose at long range: +25–30% median/mean expansions on BOTH the standard
+  and hard200 eval sets at seed 0. Flag default `REVWALK=no`; a future bootstrapped
+  (Bellman-target) variant over generated states remains the principled successor idea.
+  Details in `rank_forward/experiments/README.md`.
 - **Wave 3 factorized (quasi)metric embedding (`MODEL=embed`) was tested and REJECTED.**
   Head-selection gate (seed 0): best head (`mlp`) is 3.3× worse on expansions and 1.5×
   slower than the `smallcnn` cross-encoder baseline; ℓ1/quasi worse still. Root cause is a
@@ -52,4 +58,12 @@
   unmeetable artifacts. The unfiltered source `data/states10_3box.txt` is left intact.
 - Rebuild/extend the solvable set with `analysis/build_solvable_benchmark.py`
   (env knobs: `BENCH_N`, `BENCH_CAP`, `BENCH_KEEP`, `BENCH_WORKERS`).
+- **Secondary HARD eval set (2026-07-09): `data/solvable10_3box_hard200.txt`**
+  (load via `get_hard_eval_data()`; build with `analysis/build_hard_eval.py`) — the 200
+  hardest untouched-tail boards by blind-search expansions (median 12.5k, plans 40–90).
+  The standard held-out 200 is near saturation; evaluate new methods on BOTH sets
+  (`rank_forward/experiments/hard_eval.py`, `EVAL_MAX_ITERS=50000`; it loads saved
+  checkpoints — on-policy training is not run-to-run reproducible, so always evaluate
+  the gated model, not a retrain). Hard-set seed-0 reference: blind 200/12469.5/13932.8;
+  reference model 200/2887/3730.
 - The online experiment `learning/online_run.py` reads the solvable dataset; `MAX_ITERS` is an env knob.

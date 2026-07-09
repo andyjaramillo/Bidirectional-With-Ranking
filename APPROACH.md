@@ -199,10 +199,37 @@ premise of Wave 3g is now empirically validated twice over.*
   deficit, so it was not built. The principled-full-F2F goal remains open but
   needs a substrate other than a bi-encoder (see below).
 
+**REVWALK — reverse-walk long-range pair generation: TRIED & REJECTED
+(2026-07-09).** Post-roadmap idea targeting the long-range label hole (all
+finite buffer labels are bounded by solved-path / explored-subgraph distances):
+random backward-game walks from the backward root; the reversed walk is a valid
+forward path, so cumulative reversed edge costs (via the `path_edge_costs`
+hook) are sound upper-bound labels at ranges no solve reaches; first-visit
+dedup; length curriculum 8→64; runs on failed solves too. Soundness
+machine-verified, yet **worse on BOTH eval sets at seed 0** (standard: median
+146→189.5, mean 465→599; hard200: median 2887→3695, mean 3730→4658). Root
+cause: raw walk-length labels are loose upper bounds (walks wander), injecting
+large state-dependent inflation exactly at the long ranges they were meant to
+fix — HINDSIGHT's labels are subgraph-shortest (tight), walk labels are
+single-trajectory (loose). The principled successor is **bootstrapped Bellman
+targets** (`h_target(x,y) = min over recorded/generated successors x' of
+[c(x,x') + h(x',y)]`) over generated states / recorded graphs — DeepCubeA's
+actual mechanism — which remains open. Code kept, `REVWALK=no` default.
+
+**Hard held-out benchmark (hard200): ADOPTED as secondary eval (2026-07-09).**
+The standard held-out 200 is near saturation (median ~118–146 vs same-seed
+noise ~118↔155). `analysis/build_hard_eval.py` keeps the 200 hardest
+untouched-tail boards by the domain-agnostic difficulty measure "deterministic
+blind-search expansions" (median 12.5k, plans 40–90). Generalization result:
+the reference model, trained only on the easy pool, solves 200/200 hard
+instances at 4.3× fewer expansions than blind — and the set restores headroom
+for future method effects. Evaluate new methods on BOTH sets.
+
 **Explicitly not pursuing** (dead ends / unprincipled): more anchor-selection
 variants; brute-force full-F2F with the monolithic net; ranking-only losses;
 capacity-only architecture changes ("more attention" without a structural
-argument); anything Sokoban-specific.
+argument); anything Sokoban-specific; raw walk-length long-range labels
+(REVWALK — superseded by the open bootstrapped-targets idea).
 
 ## 4. Cost-generality (design principle, 2026-07-03)
 
