@@ -1,0 +1,2 @@
+# gym-sokoban reverse-play, dim=(10,10) num_steps=34 seed=6
+# kept=200 generated=291 unrepresentable=35 unsolvable_fullgoal=2 budget_capped=45 cap=100000

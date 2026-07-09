@@ -17,7 +17,9 @@ Key env knobs (all optional):
   N_TOTAL, MODEL_CHANNELS, BATCH_SIZE, UPDATES_PER_SOLVE, WARMUP, BUFFER_CAP,
   LOSS={mse,rank,both}, REG_LOSS={mae,mse}, RANK_MARGIN, USE_G={yes,no},
   TRAIN_DEVICE={cpu,mps}, K_REMINE, REMINE_RANDOM_FRAC,
-  COLLECT_OFF_PATH={yes,no}, OFF_PATH_PER_PUZZLE
+  COLLECT_OFF_PATH={yes,no}, OFF_PATH_PER_PUZZLE,
+  PATH_OFF_RANK={yes,no}, PATH_OFF_RANK_W, PATH_OFF_RANK_N, PATH_OFF_RANK_CAP,
+  PER={yes,no}, PER_ALPHA, PER_BETA, PER_EPS
 """
 import os
 import random
@@ -45,10 +47,18 @@ N_TOTAL = int(os.environ.get("N_TOTAL", "1000"))
 # tail in.
 MAX_ITERS = int(os.environ.get("MAX_ITERS", "10000"))
 MODEL_CHANNELS = int(os.environ.get("MODEL_CHANNELS", "32"))
-# Heuristic architecture: "smallcnn" (conv tower + global avg-pool) or
+# Heuristic architecture: "smallcnn" (conv tower + global avg-pool),
 # "smallcnn_attn" (adds one positional self-attention block between the
-# conv tower and the MLP head — global receptive field in a single layer).
+# conv tower and the MLP head — global receptive field in a single layer),
+# or "quasi" (Wave 3g: factorized quasimetric h(x,y)=d(φ(x),φ(y)) with an
+# asymmetric-L1 head — d(x,x)=0, triangle inequality, and asymmetry by
+# construction; point-anchor smallest slice).
 MODEL = os.environ.get("MODEL", "smallcnn").lower()
+# Domain: "sokoban" (default) or "tiles<n>" (e.g. tiles5 — sliding-tile).
+# Selects the game dynamics (game/domain.py), the dataset, and the NN input
+# encoding (domain.model_kwargs). Everything else — losses, mining,
+# hindsight, search — is domain-agnostic and runs unchanged.
+DOMAIN_NAME = os.environ.get("DOMAIN", "sokoban").lower()
 # Factorized (quasi)metric embedding model (APPROACH.md Wave 3): MODEL=embed.
 # HEAD picks the combiner: 'quasi' (asymmetric quasimetric, triangle + h(x,x)=0
 # by construction — the principled target), 'l1' (symmetric pseudometric),
@@ -93,6 +103,44 @@ RANK_MARGIN = float(os.environ.get("RANK_MARGIN", "1.0"))
 PATH_RANK = os.environ.get("PATH_RANK", "yes").lower() == "yes"
 PATH_RANK_PAIRS = int(os.environ.get("PATH_RANK_PAIRS", "32"))
 PATH_RANK_W = float(os.environ.get("PATH_RANK_W", "0.5"))
+# Path-vs-off-path A*-ranking margin (PATH_OFF_RANK, default off). Enforces the
+# operational optimal-efficiency criterion the open list actually uses but which
+# no current term supplies: every on-path node must beat every EXPANDED off-path
+# competitor by f = g + h (Chrestien et al. Def. 1 / classic A* optimal
+# efficiency). PATH_RANK ranks within-path pair *distances*; the buffer margin
+# term pairs mostly cross-puzzle; neither pits an on-path node against the
+# off-path sibling that the search actually had to out-rank. This is the
+# calibration-SAFE successor of the old path_len+BONUS hard negatives: it uses
+# ONLY true quantities (real g from search, true BFS distances for filtering) as
+# a ranking-only hinge, so — unlike the fabricated BONUS labels — it never
+# touches the MSE regression. Off-path negatives are filtered to STRICTLY
+# suboptimal nodes (g_u + d(u->goal) > total path cost) so nodes on an alternate
+# optimal path are not wrongly pushed down. COST-GENERAL via path_edge_costs;
+# direction-correct by construction (all forward-frame, query node->goal).
+# Additive on top of the untouched loss. Pending 3-seed validation vs the
+# reference 198.7/155.3/513; PATH_OFF_RANK=no recovers the reference.
+PATH_OFF_RANK = os.environ.get("PATH_OFF_RANK", "no").lower() == "yes"
+PATH_OFF_RANK_W = float(os.environ.get("PATH_OFF_RANK_W", "0.5"))
+PATH_OFF_RANK_N = int(os.environ.get("PATH_OFF_RANK_N", "16"))
+PATH_OFF_RANK_CAP = int(os.environ.get("PATH_OFF_RANK_CAP", "256"))
+# Prioritized experience replay (PER, default off). Uniform sampling spends
+# most of the gradient budget on pairs the net already fits; with a 20k FIFO
+# buffer, entries linger ~1000 puzzles regardless of whether they still carry
+# signal. PER=yes draws entries with probability ∝ (|h−d| + PER_EPS)^PER_ALPHA
+# (Schaul et al. 2015, proportional variant) and applies max-normalized
+# importance-sampling weights (N·P)^(−PER_BETA) to the regression term, so the
+# regression optimum stays unbiased while gradient concentrates on the not-
+# yet-fit pairs — disproportionately the hard-tail states that dominate MEAN
+# expansions. Priorities refresh on every draw; new/re-mined entries enter at
+# the running max so each is visited at least once. Domain-agnostic (consumes
+# only regression errors); ranking terms are computed on the same batch and
+# inherit the shifted sampling distribution unweighted (ordering constraints
+# carry no scale to bias). PER=no is byte-identical to the reference (the
+# priority bookkeeping consumes no RNG). Pending 3-seed validation.
+PER = os.environ.get("PER", "no").lower() == "yes"
+PER_ALPHA = float(os.environ.get("PER_ALPHA", "0.6"))
+PER_BETA = float(os.environ.get("PER_BETA", "0.4"))
+PER_EPS = float(os.environ.get("PER_EPS", "0.5"))
 # If "no", drop g from the f-score (GBFS instead of A*-style).
 USE_G = os.environ.get("USE_G", "yes").lower() == "yes"
 # Detect the frontier meeting as soon as both sides have GENERATED the shared
@@ -162,13 +210,12 @@ N_ZERO_PAIRS = int(os.environ.get("N_ZERO_PAIRS", "0"))
 # distances over the recorded union graph and add the finite ones to the
 # buffer — the pairwise analogue of hindsight experience replay: train on the
 # test distribution with ground-truth-in-hindsight labels. DEFAULT on since
-# 5-seed validation: mean -8.6% (better 4/5 seeds), the tail metric it targets;
-# median a wash (-2.9%, better 3/5); solve rate tied. HINDSIGHT=no recovers the
-# pre-2e reference (198.7/155.3/513). Caveats on record: labels are
-# explored-subgraph upper bounds; ~32 samples/puzzle dilute the fixed FIFO
-# buffer; only ~21% of logged queries are label-able. Adopted as a lead call --
-# it narrowly missed the pre-registered "no >10% regression on any seed" bar
-# (seed-3 median +13%, inside the method's historical median spread 138-172).
+# its 5-seed validation (mean -8.6%, better 4/5; median a wash -2.9%; solve
+# tied — a lead call, see experiments/README.md). The 2026-07-07 dose sweep
+# (hindsight_tuning_results/) found PER_PUZZLE=64 + LABEL_CAP=256 better still
+# (median -8.8%, better 3/3 vs the no-hindsight control); defaults keep the
+# 5-seed-validated 32/128 until the higher dose is validated at 5 seeds.
+# HINDSIGHT=no recovers the pre-2e reference.
 HINDSIGHT = os.environ.get("HINDSIGHT", "yes").lower() == "yes"
 HINDSIGHT_PER_PUZZLE = int(os.environ.get("HINDSIGHT_PER_PUZZLE", "32"))
 HINDSIGHT_LABEL_CAP = int(os.environ.get("HINDSIGHT_LABEL_CAP", "128"))
@@ -189,6 +236,8 @@ QUERY_LOG_K = int(os.environ.get("QUERY_LOG_K", "256"))
 # function + the cost hook (domain-agnostic; DeepCubeA-style generation,
 # adapted to pairwise h). Walk length follows a linear curriculum
 # REVWALK_LEN_MIN -> REVWALK_LEN over the first REVWALK_CURR_FRAC of the run.
+# TRIED & REJECTED (2026-07-09): loose single-trajectory labels regress both
+# eval sets; kept off by default (see APPROACH.md). REVWALK=no recovers ref.
 REVWALK = os.environ.get("REVWALK", "no").lower() == "yes"
 REVWALK_WALKS = int(os.environ.get("REVWALK_WALKS", "4"))
 REVWALK_LEN = int(os.environ.get("REVWALK_LEN", "64"))
@@ -214,8 +263,12 @@ REMINE_RANDOM_FRAC = float(os.environ.get("REMINE_RANDOM_FRAC", "0.1"))
 
 
 # ── Search + training helpers ─────────────────────────────────────────────
+from game.domain import get_domain
+DOMAIN = get_domain(DOMAIN_NAME)
+
+
 def run_search(puzzle, nn_model=None):
-    s = BidirectionalF2FSearch(puzzle, nn_model)
+    s = BidirectionalF2FSearch(puzzle, nn_model, domain=DOMAIN)
     s.use_g_in_f = USE_G
     s.meet_on_generate = MEET_ON_GENERATE
     s.seam_repair = SEAM_REPAIR
@@ -541,6 +594,101 @@ def off_path_distance_to_goal(s):
     return dist, goal_board
 
 
+def build_path_off_rank_data(s, path, cap, rng):
+    """Precompute (once per solve) the data for the path-vs-off-path A*-ranking
+    term (PATH_OFF_RANK): on-path nodes and strictly-suboptimal EXPANDED
+    off-path nodes, each with its true forward g-cost, plus the shared goal
+    board and target.
+
+    The optimal-efficiency criterion (Chrestien et al. Def. 1) an ideal
+    heuristic must satisfy is that every on-path node out-ranks every off-path
+    competitor by f = g + h — the exact comparison the open list makes, which
+    the buffer/PATH_RANK terms never supply directly. This builds that contrast
+    from ONLY true quantities: real g from ``s.g_f`` and true BFS distances for
+    filtering — no fabricated labels (the calibration-safe successor of the old
+    path_len+BONUS hard negatives).
+
+    Off-path negatives are filtered to STRICTLY suboptimal nodes
+    (g_u + d(u->goal) > total path cost C): a node lying on another optimal path
+    legitimately ties the on-path f and must not be pushed down. Direction-
+    correct by construction (all boards forward-frame; the downstream query
+    h(node, target, goal) is the forward-dynamics distance node->goal, so it is
+    identical under DIRECTED). COST-GENERAL: g and C come from path_edge_costs,
+    never a hardwired step of 1. ``cap`` bounds how many closed_f hashes are
+    decoded (cost control; the BFS mirrors COLLECT_OFF_PATH's, recomputed here
+    so the term is self-contained). Returns (goal_board, target, on_list,
+    off_list) or None when no clean negative exists.
+    """
+    if not path or len(path) < 2:
+        return None
+    dist, goal_board = off_path_distance_to_goal(s)
+    if dist is None:
+        return None
+    fg = s.forward_game
+    target = fg.target
+    decoded = [fg.decodeMap(h) for h in path]
+    costs = path_edge_costs(decoded)
+    on_list, cg = [], 0.0
+    for i, b in enumerate(decoded):
+        on_list.append((b, cg))
+        if i < len(costs):
+            cg += costs[i]
+    total_cost = cg
+    on_keys = {s._full_key(b) for b in decoded}
+
+    hashes = list(s.closed_f)
+    if len(hashes) > cap:
+        hashes = rng.sample(hashes, cap)
+    off_list = []
+    for u in hashes:
+        gu = s.g_f.get(u)
+        if gu is None:
+            continue
+        ub = fg.decodeMap(u)
+        fk = s._full_key(ub)
+        if fk in on_keys:
+            continue
+        du = dist.get(fk)
+        if du is None:
+            continue
+        if gu + du > total_cost:          # strictly suboptimal → clean negative
+            off_list.append((ub, float(gu)))
+    if not off_list:
+        return None
+    return (goal_board, target, on_list, off_list)
+
+
+def path_off_rank_loss(model, data, rng, n_samples, margin):
+    """Path-vs-off-path A*-ranking hinge (PATH_OFF_RANK).
+
+    For sampled on-path nodes and off-path competitors scored toward the goal,
+    penalise every pair where an on-path node fails to beat an off-path node by
+    ``margin`` in f = g + max(0, h):
+        mean over (on, off) pairs of  relu(margin + f_on - f_off).
+    The max(0, h) clamp mirrors the search-time f-score exactly. Ranking-only —
+    no gradient reaches any regression label. Returns None if either side is
+    empty.
+    """
+    goal_board, target, on_list, off_list = data
+    if not on_list or not off_list:
+        return None
+    on_sel = rng.sample(on_list, min(n_samples, len(on_list)))
+    off_sel = rng.sample(off_list, min(n_samples, len(off_list)))
+    n_on, n_off = len(on_sel), len(off_sel)
+    boards = [b for b, _ in on_sel] + [b for b, _ in off_sel]
+    h = model.forward_batch(boards, [target] * (n_on + n_off),
+                            [goal_board] * (n_on + n_off))
+    if h.ndim == 0:
+        h = h.unsqueeze(0)
+    h = h.clamp_min(0.0)
+    gvals = torch.tensor([gg for _, gg in on_sel] + [gg for _, gg in off_sel],
+                         dtype=h.dtype, device=h.device)
+    f = h + gvals
+    f_on, f_off = f[:n_on], f[n_on:]
+    viol = torch.relu(margin + f_on.unsqueeze(1) - f_off.unsqueeze(0))
+    return viol.mean()
+
+
 def solve_and_collect(puzzle, puzzle_id, nn_model, buffer, rng):
     """Solve a puzzle and mine training tuples from the result.
 
@@ -610,11 +758,21 @@ def rolling_mean(xs, w):
 
 
 # ── Load puzzles ───────────────────────────────────────────────────────────
-# Solvable-only benchmark (data/solvable10_3box.txt): the player-goal-pinned
-# unmeetable artifacts are filtered out, so every puzzle here contributes a
-# real training signal. Built by analysis/build_solvable_benchmark.py.
-puzzles = get_solvable_data(limit=N_TOTAL)
-print(f"Using {len(puzzles)} solvable puzzles from the filtered dataset.")
+# Sokoban: solvable-only benchmark (data/solvable10_3box.txt) — the
+# player-goal-pinned unmeetable artifacts are filtered out, so every puzzle
+# contributes a real training signal (analysis/build_solvable_benchmark.py).
+# Tiles: scramble-from-goal training set (analysis/build_tiles_benchmark.py),
+# solvable by construction.
+if DOMAIN_NAME.startswith("tiles"):
+    from game.getData import DATA_DIR
+    _tn = DOMAIN.n
+    with open(os.path.join(DATA_DIR, f"tiles{_tn}_train.txt")) as _f:
+        puzzles = [np.array([int(v) for v in line.split()]).reshape(_tn, _tn)
+                   for line in _f if line.strip()][:N_TOTAL]
+    print(f"Using {len(puzzles)} tiles{_tn} training puzzles.")
+else:
+    puzzles = get_solvable_data(limit=N_TOTAL)
+    print(f"Using {len(puzzles)} solvable puzzles from the filtered dataset.")
 
 
 # ── Phase A: baseline (no NN) ──────────────────────────────────────────────
@@ -633,6 +791,9 @@ print(f"  done in {time.time()-t0:.1f}s  mean iters={np.mean(base_iters):.1f}  "
 _pr_tag = (f" +PATH_RANK(w={PATH_RANK_W},pairs={PATH_RANK_PAIRS})"
            if PATH_RANK else "")
 _pr_tag += " DIRECTED" if DIRECTED else ""
+_pr_tag += (f" +PATH_OFF_RANK(w={PATH_OFF_RANK_W},n={PATH_OFF_RANK_N})"
+            if PATH_OFF_RANK else "")
+_pr_tag += (f" +PER(a={PER_ALPHA},b={PER_BETA},eps={PER_EPS})" if PER else "")
 _pr_tag += (f" +CONSIST(w={CONSIST_W},triples={CONSIST_TRIPLES})"
             if CONSIST else "")
 _pr_tag += f" zero_pairs={N_ZERO_PAIRS}" if N_ZERO_PAIRS else ""
@@ -646,13 +807,18 @@ print(f"\n[Online] batch={BATCH_SIZE} K={UPDATES_PER_SOLVE} warmup={WARMUP} "
       f"use_g={USE_G} train_device={TRAIN_DEVICE} K_remine={K_REMINE}")
 _model_kw = (dict(k=EMBED_K, head=HEAD)
              if MODEL in ("embed", "embedcnn", "quasinet") else {})
+# Non-Sokoban domains supply their own NN input encoding (channel count +
+# per-board encode_fn); Sokoban returns {} = the model's built-in default.
+_model_kw.update(DOMAIN.model_kwargs())
 torch.manual_seed(SEED + 100)
 train_model = build_model(MODEL, MODEL_CHANNELS, **_model_kw)
 if TRAIN_DEVICE != "cpu":
     train_model = train_model.to(TRAIN_DEVICE)
 criterion, optimizer = train_model.initialize_cr_opt(loss_type=REG_LOSS)
 torch.manual_seed(SEED)
-_mtag = f"{MODEL}({HEAD},k={EMBED_K})" if _model_kw else MODEL
+_mtag = (f"{MODEL}({HEAD},k={EMBED_K})"
+         if MODEL in ("embed", "embedcnn", "quasinet")
+         else f"{MODEL}[{DOMAIN.name}]" if DOMAIN.model_kwargs() else MODEL)
 print(f"  model={_mtag}  params={sum(p.numel() for p in train_model.parameters()):,}")
 
 # Search runs on a CPU twin (same object if training is already CPU).
@@ -691,13 +857,13 @@ for n, p in enumerate(puzzles):
 
     path, s, dt, n_pairs, n_off = solve_and_collect(
         p, n, search_model if use_nn else None, buffer, _rng)
+    if path:
+        offpath_added.append(n_off)
     # REVWALK is independent of solve success (failed solves contribute
     # nothing otherwise). Kept out of n_pairs so re-mine eligibility (`seen`)
     # still means "contributed solve-mined pairs".
     if REVWALK:
         collect_reverse_walk_pairs(s, buffer, _rng, n, revwalk_len_at(n))
-    if path:
-        offpath_added.append(n_off)
     solve_iters = s.first_meeting_iter if s.first_meeting_iter is not None else s.iteration
     online_iters.append(solve_iters)
     online_times.append(dt)
@@ -715,8 +881,19 @@ for n, p in enumerate(puzzles):
             path_boards = [s.forward_game.decodeMap(h) for h in path]
             pr_target = s.forward_game.target
             pr_costs = path_edge_costs(path_boards)
+        # Path-vs-off-path ranking (PATH_OFF_RANK): decode path + harvest the
+        # strictly-suboptimal off-path competitors once per solve; each update
+        # below samples its own on/off subset from this.
+        path_off_data = None
+        if PATH_OFF_RANK and path and len(path) >= 2:
+            path_off_data = build_path_off_rank_data(
+                s, path, PATH_OFF_RANK_CAP, _rng)
         for _ in range(UPDATES_PER_SOLVE):
-            samples = buffer.sample(BATCH_SIZE)
+            if PER:
+                samples, per_idx, per_w = buffer.sample_per(
+                    BATCH_SIZE, PER_ALPHA, PER_BETA)
+            else:
+                samples = buffer.sample(BATCH_SIZE)
             optimizer.zero_grad()
             states, targets, others, tars = [], [], [], []
             for st, tgt, gm, ctg in samples:
@@ -727,7 +904,20 @@ for n, p in enumerate(puzzles):
             if pt.ndim == 0:
                 pt = pt.unsqueeze(0); tt = tt.unsqueeze(0)
 
-            mse = criterion(pt, tt)
+            if PER:
+                # IS-weighted regression (unbiased under the shifted sampling
+                # distribution); refresh drawn priorities with fresh errors
+                # BEFORE any add() shifts logical indices.
+                err = (pt - tt).abs()
+                w = torch.tensor(per_w, dtype=pt.dtype, device=pt.device)
+                if REG_LOSS == "mae":
+                    mse = (w * err).mean()
+                else:
+                    mse = (w * (pt - tt) ** 2).mean()
+                buffer.update_priorities(per_idx, err.detach().cpu().tolist(),
+                                         PER_EPS)
+            else:
+                mse = criterion(pt, tt)
             rank_loss = torch.tensor(0.0, device=pt.device)
             half = pt.shape[0] // 2
             if half >= 1 and LOSS in ("rank", "both"):
@@ -750,6 +940,13 @@ for n, p in enumerate(puzzles):
                                          _rng, PATH_RANK_PAIRS, RANK_MARGIN)
                 if pr is not None:
                     loss = loss + PATH_RANK_W * pr
+
+            # Additive path-vs-off-path A*-ranking hinge (PATH_OFF_RANK).
+            if path_off_data is not None and PATH_OFF_RANK:
+                por = path_off_rank_loss(train_model, path_off_data, _rng,
+                                         PATH_OFF_RANK_N, RANK_MARGIN)
+                if por is not None:
+                    loss = loss + PATH_OFF_RANK_W * por
 
             # Additive one-step consistency hinge (CONSIST, Wave 2d).
             if path_boards is not None and CONSIST:

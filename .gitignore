@@ -9,3 +9,40 @@ loss_logs/
 *.pt
 rank_forward/ckpt/
 rank_forward/cache/
+
+# ── generated experiment artifacts (reproducible; not source) ─────────────
+# Run-log store (model weights + per-instance eval JSON) — regenerable.
+runs/
+# Experiment result directories — NOT committed (per project owner).
+*_results/
+followup_ablations/
+# Raw run logs everywhere.
+*.log
+# Scratch / temp
+*.tmp
+.DS_Store
+
+# ── stray root-level duplicates (leftovers from before the code was ──────
+# organized into game/ search/ learning/ rank_forward/; the REAL files live
+# in those packages). Root-anchored (leading /) so e.g. /nn.py hides only the
+# stray, never learning/nn.py. Not in the supervisor's clean repo.
+/AI_Bidirectional.py
+/AnchorSearch.py
+/astar.py
+/astar_helper.py
+/getData.py
+/graph.py
+/learn.py
+/matplotlibcode.py
+/nn.py
+/prompt.txt
+/results.py
+/sample_random.py
+/SokobanGame.py
+/states10_3box.txt
+/test_astar.py
+/test_box.txt
+/test_f2f.py
+/train_astar.py
+/twodattention.py
+/visualizer_map.py

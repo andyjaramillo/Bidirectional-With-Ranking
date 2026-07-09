@@ -39,7 +39,8 @@ Heuristic = Optional[Callable[[List[np.ndarray]], List[float]]]
 class ForwardSearch:
     def __init__(self, puzzle: np.ndarray, heuristic: Heuristic = None,
                  use_g_in_f: bool = True, use_deadlock: bool = False,
-                 reopen: Optional[bool] = None, full_goal: bool = False):
+                 reopen: Optional[bool] = None, full_goal: bool = False,
+                 domain=None):
         """
         Args:
             puzzle: initial 10x10 board (0 wall, 1 floor, 2 target, 3 player, 4 box).
@@ -60,7 +61,11 @@ class ForwardSearch:
                 player), instead of the easier classical goal where the player
                 may end anywhere. Default False = classical Sokoban goal.
         """
-        self.game = SokobanGame(puzzle)
+        if domain is None:
+            from game.domain import SokobanDomain
+            domain = SokobanDomain()
+        self.domain = domain
+        self.game = domain.make_forward(puzzle)
         self.start = np.asarray(puzzle)
         self.heuristic = heuristic
         self.use_g_in_f = use_g_in_f

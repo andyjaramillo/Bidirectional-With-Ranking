@@ -22,7 +22,7 @@ from rank_forward import config as C
 
 def evaluate(model: Optional[object], boards: List[np.ndarray], alg: str = "astar",
              max_iters: int = 10000, use_deadlock: bool = False,
-             full_goal: bool = False) -> dict:
+             full_goal: bool = False, domain=None) -> dict:
     """Run forward search over ``boards``. ``model=None`` is the blind (h=0)
     baseline. Returns per-puzzle expansion counts, solved flags, and summaries.
     For solved puzzles the recorded count is ``first_solved_iter`` (expansions
@@ -36,7 +36,8 @@ def evaluate(model: Optional[object], boards: List[np.ndarray], alg: str = "asta
         # Build the searcher first so its goal_ctx (the real goal — player@start
         # when full_goal) is known, then point the heuristic at that SAME goal.
         s = ForwardSearch(b, heuristic=None, use_g_in_f=use_g,
-                          use_deadlock=use_deadlock, full_goal=full_goal)
+                          use_deadlock=use_deadlock, full_goal=full_goal,
+                          domain=domain)
         if model is not None:
             s.heuristic = model_heuristic(model, s.target, s.goal_ctx)
         path = s.search(max_iterations=max_iters)

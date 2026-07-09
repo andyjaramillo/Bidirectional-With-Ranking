@@ -260,6 +260,22 @@ class SokobanGame:
         ~30× faster than the prior digit-join string version.
         """
         return np.asarray(map, dtype=np.uint8).tobytes()
+
+    @staticmethod
+    def fullStateKey(board):
+        """Canonical FULL-state key: positions of every movable object —
+        the agent (3) and all boxes (4). Walls and goal markers are static
+        background, and the 2-vs-1 (target-vs-floor) marking is ignored so
+        forward-frame and flipped-backward boards compare frame-to-frame.
+        (Byte-identical to the key previously computed inside the search;
+        WHAT is movable is domain knowledge, hence it lives on the game.)
+        """
+        r3, c3 = np.where(board == 3)
+        rows4, cols4 = np.where(board == 4)
+        return (r3.astype(np.uint8).tobytes() + c3.astype(np.uint8).tobytes()
+                + b"|" + rows4.astype(np.uint8).tobytes()
+                + cols4.astype(np.uint8).tobytes())
+
     def isGoal(self, board):
         """
         Check if the current board configuration is a goal state.

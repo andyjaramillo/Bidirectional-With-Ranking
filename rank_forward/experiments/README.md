@@ -450,3 +450,29 @@ Caveats: single seed / architecture / split; forward counts forward expansions v
 bidirectional total (both-frontier) expansions (the standard uni-vs-bi comparison);
 the ~50-puzzle Manhattan warmup is mildly optimal for A\*. Replicate across seeds
 before treating as a strong claim.
+
+## Addendum — local session results (2026-07-04 → 07, merged 2026-07-07)
+
+Run before the supervisor snapshot was merged in; controls are the
+PATH_OFF_RANK `off` arm (3 seeds), so numbers are comparable within each
+block, not to the 5-seed reference above. Full details in each results dir.
+
+- **PATH_OFF_RANK** (path-vs-off-path A*-ranking margin, Chrestien Def. 1
+  operationalized) — **wash**, not adopted (`path_off_rank_ablation_results/`).
+- **OFF_PATH_PER_PUZZLE=24** (volume hypothesis) — **rejected**, mean worse 3/3
+  (`followup_ablations/`).
+- **PER** (prioritized replay) — **rejected**, worse 3/3 on both metrics
+  (`per_ablation_results/`).
+- **HINDSIGHT dose sweep** (`hindsight_tuning_results/`): at
+  `PER_PUZZLE=64, LABEL_CAP=256` median better **3/3** (avg −8.8%) and mean
+  −5.5% vs control — stronger than the adopted 32/128 dose on those seeds;
+  candidate for a 5-seed validation before flipping the dose defaults.
+- **Wave-3g independent replication** (`wave3g_quasi_results/`,
+  `wave3g_quasi_hindsight_results/`, `wave3g_iqe_results/`): a parallel
+  factorized implementation (`QuasiCNN` asym-L1 head; `IQECNN` interval-union
+  IQE head, axioms unit-tested) lands at **blind level 3/3 seeds** for both
+  heads, and HINDSIGHT on top does not move it — independently confirming the
+  bi-encoder ceiling documented in the Wave 3 section above with two more head
+  types. The 1-D potential-collapse diagnosis explains the asym-L1 arm but NOT
+  the IQE arm (collapse-resistant by construction, still blind) — consistent
+  with the ceiling being the pooled single-board embedding, not the head.

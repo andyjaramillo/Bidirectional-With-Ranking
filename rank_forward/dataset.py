@@ -31,7 +31,7 @@ def load_split(n_total: int, n_eval: int) -> Tuple[List[np.ndarray], List[np.nda
 
 def build_train_instances(train_boards: List[np.ndarray], solve_cap: int,
                           use_deadlock: bool, cache_path: Optional[str] = None,
-                          full_goal: bool = False) -> List[Instance]:
+                          full_goal: bool = False, domain=None) -> List[Instance]:
     """Solve each training board optimally and assemble its Instance, skipping
     any that fail to solve within ``solve_cap``. Cached to ``cache_path``."""
     if cache_path and os.path.exists(cache_path):
@@ -42,7 +42,8 @@ def build_train_instances(train_boards: List[np.ndarray], solve_cap: int,
     n = len(train_boards)
     for i, b in enumerate(train_boards):
         inst = build_instance(b, max_iterations=solve_cap,
-                              use_deadlock=use_deadlock, full_goal=full_goal)
+                              use_deadlock=use_deadlock, full_goal=full_goal,
+                              domain=domain)
         if inst is not None:
             instances.append(inst)
         if (i + 1) % 100 == 0:
@@ -57,7 +58,9 @@ def build_train_instances(train_boards: List[np.ndarray], solve_cap: int,
 
 
 def cache_key(cache_dir: str, n_total: int, n_eval: int, solve_cap: int,
-              use_deadlock: bool, full_goal: bool = False) -> str:
+              use_deadlock: bool, full_goal: bool = False,
+              domain_name: str = "") -> str:
     fg = "_fg" if full_goal else ""
-    name = f"train_n{n_total}_ev{n_eval}_cap{solve_cap}_dl{int(use_deadlock)}{fg}.pkl"
+    dom = f"_{domain_name}" if domain_name and domain_name != "sokoban" else ""
+    name = f"train_n{n_total}_ev{n_eval}_cap{solve_cap}_dl{int(use_deadlock)}{fg}{dom}.pkl"
     return os.path.join(cache_dir, name)

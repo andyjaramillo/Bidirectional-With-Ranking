@@ -42,7 +42,7 @@ class Instance:
 
 
 def solve_optimal(puzzle: np.ndarray, max_iterations: int = 200000,
-                  full_goal: bool = False) -> Optional[List[np.ndarray]]:
+                  full_goal: bool = False, domain=None) -> Optional[List[np.ndarray]]:
     """Return a provably shortest path (list of boards) or None.
 
     A* with the admissible MWPM-Manhattan heuristic and reopening is optimal
@@ -51,15 +51,18 @@ def solve_optimal(puzzle: np.ndarray, max_iterations: int = 200000,
     intentionally OFF here: SokobanGame.hasDeadlock does not exempt boxes
     already on targets, so it could prune the goal.
     """
-    game = SokobanGame(puzzle)
+    if domain is None:
+        from game.domain import SokobanDomain
+        domain = SokobanDomain()
+    game = domain.make_forward(puzzle)
     s = ForwardSearch(puzzle, heuristic=manhattan_heuristic(game),
                       use_g_in_f=True, use_deadlock=False, reopen=True,
-                      full_goal=full_goal)
+                      full_goal=full_goal, domain=domain)
     return s.search(max_iterations=max_iterations)
 
 
 def instance_from_path(puzzle: np.ndarray, path, use_deadlock: bool = False,
-                       full_goal: bool = False) -> Optional[Instance]:
+                       full_goal: bool = False, domain=None) -> Optional[Instance]:
     """Assemble a training Instance from a GIVEN solution path (list of boards,
     start -> goal). Used both by build_instance (optimal path from a separate
     solver) and by the bootstrap experiment (the satisficing path the forward
@@ -70,7 +73,10 @@ def instance_from_path(puzzle: np.ndarray, path, use_deadlock: bool = False,
     if path is None or len(path) < 2:
         return None
 
-    game = SokobanGame(puzzle)
+    if domain is None:
+        from game.domain import SokobanDomain
+        domain = SokobanDomain()
+    game = domain.make_forward(puzzle)
     path_keys = {game.encodeMap(b) for b in path}
 
     node_off: List[List[np.ndarray]] = []
@@ -108,13 +114,14 @@ def instance_from_path(puzzle: np.ndarray, path, use_deadlock: bool = False,
 
 
 def build_instance(puzzle: np.ndarray, max_iterations: int = 200000,
-                   use_deadlock: bool = False, full_goal: bool = False
-                   ) -> Optional[Instance]:
+                   use_deadlock: bool = False, full_goal: bool = False,
+                   domain=None) -> Optional[Instance]:
     """Solve ``puzzle`` OPTIMALLY (admissible A*) and assemble its training
     Instance, or None if it cannot be solved within ``max_iterations``. This is
     the imitation-from-expert path; the bootstrap experiment instead calls
     instance_from_path on a self-found (satisficing) path. ``full_goal`` targets
     the player-pinned full goal (matching the bidirectional method)."""
-    path = solve_optimal(puzzle, max_iterations=max_iterations, full_goal=full_goal)
+    path = solve_optimal(puzzle, max_iterations=max_iterations,
+                         full_goal=full_goal, domain=domain)
     return instance_from_path(puzzle, path, use_deadlock=use_deadlock,
-                              full_goal=full_goal)
+                              full_goal=full_goal, domain=domain)

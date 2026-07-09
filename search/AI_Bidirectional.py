@@ -51,8 +51,15 @@ class BidirectionalF2FSearch:
           state keys can be compared for intersection detection.
     """
 
-    def __init__(self, puzzle: np.ndarray, nn=None):
-        self.game_name = "Sokoban"
+    def __init__(self, puzzle: np.ndarray, nn=None, domain=None):
+        # Domain factory (default Sokoban) — the ONLY place a concrete game
+        # class is named. Every per-state call below stays duck-typed on the
+        # game objects the factory returns, so Sokoban behavior is unchanged.
+        if domain is None:
+            from game.domain import SokobanDomain
+            domain = SokobanDomain()
+        self.domain = domain
+        self.game_name = domain.name
         self.puzzle = puzzle
         self.nn = nn
         # Factorized (quasi)metric heuristic? If so, h(x,y)=dist(phi(x),phi(y))
@@ -64,10 +71,8 @@ class BidirectionalF2FSearch:
         self._emb = nn if (nn is not None and hasattr(nn, "embed_batch")) else None
         self._emb_cache: Dict[Tuple[bool, Optional[str]], "object"] = {}
 
-        # ── Game instances ─────────────────────────────────────────────
-        self.forward_game = SokobanGame(puzzle, isBackward=False)
-        backward_puzzle = self.forward_game.initializeBackwardPuzzle(puzzle)
-        self.backward_game = SokobanGame(backward_puzzle, isBackward=True)
+        # ── Game instances (via the domain factory) ────────────────────
+        self.forward_game, self.backward_game = domain.make_games(puzzle)
 
         # ── Open lists: min-heap of (f, neg_g, hash) ──────────────────
         # neg_g breaks f-ties in favour of deeper (larger g) nodes.
@@ -265,20 +270,13 @@ class BidirectionalF2FSearch:
     # ──────────────────────────────────────────────────────────────────
 
     def _full_key(self, board: np.ndarray) -> bytes:
-        """Canonical FULL-state key: positions of every movable object —
-        the agent (3) and all boxes (4).
-
-        This is the domain-agnostic notion of "the same state": only the
-        things that move are part of the state; walls and goal markers are
-        static background. Crucially it ignores the 2-vs-1 (target-vs-floor)
-        cell marking, which differs between the forward frame and a flipped
-        backward state, so the two frontiers can be compared frame-to-frame.
-        """
-        r3, c3 = np.where(board == 3)
-        rows4, cols4 = np.where(board == 4)
-        return (r3.astype(np.uint8).tobytes() + c3.astype(np.uint8).tobytes()
-                + b"|" + rows4.astype(np.uint8).tobytes()
-                + cols4.astype(np.uint8).tobytes())
+        """Canonical FULL-state key of a FORWARD-frame board — "the same
+        state" for frontier meeting. WHAT is movable is domain knowledge
+        (Sokoban: agent+boxes, ignoring target-vs-floor marking; tiles: every
+        cell), so the computation lives on the game (``fullStateKey``); this
+        wrapper just fixes the frame convention (callers always pass boards
+        already flipped into the forward frame)."""
+        return self.forward_game.fullStateKey(board)
 
     def _f_score(self, node_hash: str, g: int, opp_anchor_hash: Optional[str],
                  active_game: SokobanGame, opp_game: SokobanGame,
@@ -365,8 +363,9 @@ class BidirectionalF2FSearch:
         backward node actually needs (see the dir_correct field docs).
         """
         import torch
+        node_map = active_game.decodeMap(node_hash)
         if self.log_queries:
-            self._log_query(active_game.decodeMap(node_hash), opp_anchor_hash,
+            self._log_query(node_map, opp_anchor_hash,
                             active_game is self.backward_game)
         if self._emb is not None:
             # Factorized: h = dist(phi(source), phi(dest)) on cached embeddings,
@@ -380,7 +379,6 @@ class BidirectionalF2FSearch:
             h = max(0.0, float(self._emb.dist(src.unsqueeze(0),
                                               dst.unsqueeze(0)).item()))
             return float(((g + h) if self.use_g_in_f else h) + opp_g)
-        node_map = active_game.decodeMap(node_hash)
         if self.dir_correct and active_game is self.backward_game:
             src = self._dir_source(opp_anchor_hash)
             node_f = self.forward_game.flipGame(node_map)

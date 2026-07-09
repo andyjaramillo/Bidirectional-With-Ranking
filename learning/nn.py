@@ -417,17 +417,24 @@ class NN(nn.Module):
 
 
 class SmallCNN(nn.Module):
-    """Compact CNN heuristic for 10x10 Sokoban boards.
+    """Compact pairwise CNN heuristic.
 
-    Input is the same (state, target, goal_state) signature as NN: two
-    one-hot encoded boards of shape (10, 10, 5) which concatenate into a
-    10-channel tensor. Trains fast on CPU.
+    Input is the same (state, target, goal_state) signature as NN: two boards
+    encoded per-board to (H, W, C) and concatenated into a 2C-channel tensor.
+    Default C=5 with the Sokoban one-hot encoder (byte-identical to the
+    original 10x10 Sokoban wiring). Other domains pass ``in_channels`` and an
+    ``encode_fn(board, target) -> (H, W, in_channels) float array`` (e.g. the
+    tile domain's size-invariant displacement encoding) — conv + global
+    avg-pool make the tower agnostic to H and W, so one net can evaluate
+    boards of different sizes. Trains fast on CPU.
     """
 
-    def __init__(self, channels=32):
+    def __init__(self, channels=32, in_channels=5, encode_fn=None):
         super().__init__()
         self.relu = nn.ReLU()
-        self.conv1 = nn.Conv2d(10, channels, 3, padding=1)
+        self.in_channels = in_channels
+        self.encode_fn = encode_fn
+        self.conv1 = nn.Conv2d(2 * in_channels, channels, 3, padding=1)
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
         self.conv3 = nn.Conv2d(channels, channels, 3, padding=1)
         self.pool = nn.AdaptiveAvgPool2d((1, 1))
@@ -437,11 +444,19 @@ class SmallCNN(nn.Module):
         self._helper = NN.__new__(NN)  # uninitialized; only used for methods
         nn.Module.__init__(self._helper)
 
+    def _encode_pair(self, state, box_tar, goal_state):
+        """One (state, other) pair -> (1, H, W, 2C) numpy array."""
+        if self.encode_fn is not None:
+            a = self.encode_fn(state, box_tar)[None]
+            b = self.encode_fn(goal_state, box_tar)[None]
+        else:
+            a, b = NN.reshapeInputs(self._helper, state, box_tar, goal_state)
+        return np.concatenate([a, b], axis=-1)
+
     def _prep(self, state, box_tar, goal_state):
-        a, b = NN.reshapeInputs(self._helper, state, box_tar, goal_state)
-        # Concatenate the two one-hot boards in numpy, then a single
+        # Concatenate the two encoded boards in numpy, then a single
         # from_numpy/permute/float instead of two of each plus a torch.cat.
-        ab = np.concatenate([a, b], axis=-1)  # (1, 10, 10, 10)
+        ab = self._encode_pair(state, box_tar, goal_state)  # (1, H, W, 2C)
         # .contiguous() after permute: required for correct MPS backward
         # (permute leaves a non-contiguous view), negligible cost on CPU.
         t = torch.from_numpy(ab).permute(0, 3, 1, 2).float().contiguous()
@@ -471,9 +486,8 @@ class SmallCNN(nn.Module):
         """
         mats = []
         for s, t, o in zip(states, targets, others):
-            a, b = NN.reshapeInputs(self._helper, s, t, o)
-            mats.append(np.concatenate([a, b], axis=-1))  # (1, 10, 10, 10)
-        ab = np.concatenate(mats, axis=0)                 # (B, 10, 10, 10)
+            mats.append(self._encode_pair(s, t, o))       # (1, H, W, 2C)
+        ab = np.concatenate(mats, axis=0)                 # (B, H, W, 2C)
         x = torch.from_numpy(ab).permute(0, 3, 1, 2).float().contiguous()
         dev = self.conv1.weight.device
         if dev.type != "cpu":
@@ -550,6 +564,142 @@ class SmallCNNAttn(SmallCNN):
         pooled = tok.mean(dim=1)                    # (N, C) token mean-pool
         h = F.relu(F.linear(pooled, self.fc1.weight, self.fc1.bias))
         return F.linear(h, self.fc2.weight, self.fc2.bias)
+
+
+class QuasiCNN(nn.Module):
+    """Factorized quasimetric heuristic — Wave 3g, smallest slice.
+
+    h(x, y) = d(φ(x), φ(y)) with a per-state encoder φ and a FIXED asymmetric
+    head, replacing the monolithic pairwise net. Point-anchor mode only; the
+    O(1) per-anchor rescoring payoff (embedding cache in the search, full
+    front-to-front) is a later slice — this one isolates the pure structural
+    effect on expansions under the unchanged training loop and search.
+
+    Encoder φ: the SmallCNN conv tower on ONE board's 5-channel one-hot
+    encoding (targets marked on channel 2, exactly to_categorical_tensor's
+    convention) → global avg-pool → MLP → D-dim embedding. Parameter scale
+    matches SmallCNN (~10% more at D=64) — a structure change, not a capacity
+    change (APPROACH.md excludes capacity-only levers).
+
+    Head d(u, v) = Σ_i relu(v_i − u_i): the asymmetric ("directed") L1
+    quasimetric. By construction — not by loss term — it satisfies the axioms
+    Wave 2d failed to instill via hinges:
+        d(u, u) = 0,   d ≥ 0,   triangle inequality
+        (relu((w−u)_i) ≤ relu((w−v)_i) + relu((v−u)_i) pointwise),
+    while staying ASYMMETRIC (d(u,v) ≠ d(v,u)) — the quasimetric structure of
+    state-space distance under irreversible moves, validated empirically twice
+    by the DIRECTED result. Convention matches the pipeline: forward(x, tar, y)
+    estimates the forward-dynamics distance x → y.
+
+    API-compatible with SmallCNN (forward / forward_batch / initialize_cr_opt),
+    so search, replay buffer, and every loss term work unchanged via
+    MODEL=quasi. Same-encoder ablation lattice (ℓ1 / unconstrained head ×
+    point-anchor / full-frontier) comes later per APPROACH.md 3g.
+    """
+
+    def __init__(self, channels=32, embed_dim=64):
+        super().__init__()
+        self.conv1 = nn.Conv2d(5, channels, 3, padding=1)
+        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.conv3 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.fc1 = nn.Linear(channels, 64)
+        self.fc2 = nn.Linear(64, embed_dim)
+        # Reuse NN's one-hot helpers (same trick as SmallCNN).
+        self._helper = NN.__new__(NN)
+        nn.Module.__init__(self._helper)
+
+    def _encode_np(self, board, box_tar):
+        """One board -> (1, 10, 10, 5) one-hot numpy (targets on channel 2)."""
+        return NN.to_categorical_tensor(
+            self._helper, np.asarray(board), box_tar, 10, 10).reshape(1, 10, 10, 5)
+
+    def _embed(self, x):
+        """(B, 5, 10, 10) float tensor -> (B, D) embeddings."""
+        x = F.relu(F.conv2d(x, self.conv1.weight, self.conv1.bias, padding=1))
+        x = F.relu(F.conv2d(x, self.conv2.weight, self.conv2.bias, padding=1))
+        x = F.relu(F.conv2d(x, self.conv3.weight, self.conv3.bias, padding=1))
+        x = F.adaptive_avg_pool2d(x, (1, 1)).flatten(1)
+        x = F.relu(F.linear(x, self.fc1.weight, self.fc1.bias))
+        return F.linear(x, self.fc2.weight, self.fc2.bias)
+
+    @staticmethod
+    def _dist(u, v):
+        """Asymmetric-L1 quasimetric d(u -> v) = sum_i relu(v_i - u_i)."""
+        return F.relu(v - u).sum(dim=-1)
+
+    def _to_batch(self, mats):
+        x = torch.from_numpy(np.concatenate(mats, axis=0))
+        x = x.permute(0, 3, 1, 2).float().contiguous()
+        dev = self.conv1.weight.device
+        return x if dev.type == "cpu" else x.to(dev)
+
+    def forward(self, state, box_tar, goal_state):
+        x = self._to_batch([self._encode_np(state, box_tar),
+                            self._encode_np(goal_state, box_tar)])
+        e = self._embed(x)                        # (2, D)
+        return self._dist(e[0:1], e[1:2])         # d(state -> goal_state)
+
+    def forward_batch(self, states, targets, others):
+        """One conv pass over the 2B stacked boards, then the pairwise head.
+        Same output contract as SmallCNN.forward_batch: 1-D tensor of B."""
+        mats = [self._encode_np(s, t) for s, t in zip(states, targets)]
+        mats += [self._encode_np(o, t) for o, t in zip(others, targets)]
+        e = self._embed(self._to_batch(mats))     # (2B, D)
+        n = len(states)
+        return self._dist(e[:n], e[n:])           # d(state_i -> other_i)
+
+    def initialize_cr_opt(self, lr=1e-3, loss_type="mae"):
+        if loss_type == "mse":
+            crit = nn.MSELoss()
+        else:
+            crit = nn.L1Loss()
+        return crit, optim.Adam(self.parameters(), lr=lr)
+
+
+class IQECNN(QuasiCNN):
+    """Wave 3g head-lattice arm: Interval Quasimetric Embedding head
+    (Wang & Isola 2022, "Improved Representation of Asymmetrical Distances
+    with Interval Quasimetric Embeddings") on the unchanged QuasiCNN encoder.
+
+    Motivation: the asymmetric-L1 head admits the degenerate 1-D "progress
+    potential" solution d(x,y) ≈ relu(u(y) − u(x)) that telescopes on the
+    (path-dominated) training distribution while carrying zero cross-branch
+    signal — the diagnosed failure of both plain quasi and quasi+HINDSIGHT
+    (see wave3g_quasi_results/ and wave3g_quasi_hindsight_results/). IQE is
+    built to resist exactly this rank collapse: each of K components measures
+    the LEBESGUE UNION of M intervals [u_i, max(u_i, v_i)] — overlapping
+    dimensions do not add, so no single latent direction can absorb the
+    distance — and the maxmean mixture couples components nonlinearly.
+
+    Head, on the D-dim embedding reshaped to (K, M):
+        d_k(u, v) = | ∪_{i≤M} [u_{k,i}, max(u_{k,i}, v_{k,i})] |
+        d(u, v)   = α·max_k d_k + (1−α)·mean_k d_k,   α = σ(raw) learnable.
+    Axioms hold by construction: d(u,u)=0, d≥0, triangle inequality,
+    asymmetry (each interval degenerates when v ≤ u pointwise). One extra
+    parameter (α) vs QuasiCNN — a structure change, not a capacity change.
+    """
+
+    def __init__(self, channels=32, embed_dim=64, components=8):
+        assert embed_dim % components == 0, "embed_dim must split into components"
+        super().__init__(channels, embed_dim)
+        self.K = components
+        self.M = embed_dim // components
+        self.alpha_raw = nn.Parameter(torch.zeros(1))  # α = σ(0) = 0.5 at init
+
+    def _dist(self, u, v):
+        """Batched IQE-maxmean: (B, D) x (B, D) -> (B,)."""
+        a = u.view(-1, self.K, self.M)
+        b = torch.maximum(u, v).view(-1, self.K, self.M)
+        # Union length per component: sort intervals by left end, then each
+        # interval contributes what pokes above the running max right end.
+        a, idx = torch.sort(a, dim=-1)
+        b = torch.gather(b, -1, idx)
+        prev = torch.cummax(b, dim=-1).values
+        prev = torch.cat([torch.full_like(prev[..., :1], float("-inf")),
+                          prev[..., :-1]], dim=-1)
+        comp = torch.clamp(b - torch.maximum(a, prev), min=0).sum(dim=-1)  # (B, K)
+        alpha = torch.sigmoid(self.alpha_raw)
+        return alpha * comp.max(dim=-1).values + (1 - alpha) * comp.mean(dim=-1)
 
 
 class EmbedCNN(nn.Module):
@@ -674,9 +824,13 @@ def build_model(name="smallcnn", channels=32, **kw):
     """Factory used by online_run to select a heuristic model by name."""
     name = name.lower()
     if name in ("smallcnn", "cnn", "small"):
-        return SmallCNN(channels)
+        return SmallCNN(channels, **kw)
     if name in ("smallcnn_attn", "attn", "cnn_attn"):
         return SmallCNNAttn(channels, **kw)
+    if name in ("quasi", "quasicnn", "factored"):
+        return QuasiCNN(channels, **kw)
+    if name in ("iqe", "iqecnn"):
+        return IQECNN(channels, **kw)
     if name in ("embed", "embedcnn", "quasinet"):
         return EmbedCNN(channels, **kw)
     raise ValueError(f"unknown model: {name!r}")
