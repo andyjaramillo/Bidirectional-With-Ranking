@@ -155,7 +155,7 @@ def eval_bd(nn, boards, dom):
 
 run_bb = runlog.run_dir("tiles5", "bidir_blind", SEED, dict(BASE_CFG, method="bidir_blind"))
 runlog.save_config(run_bb, dict(BASE_CFG, method="bidir_blind"))
-for name, nn, run in (("bidir blind", None, run_bb),
+for name, nn, run in (("bidir Manhattan", None, run_bb),
                       ("bidir learned", model_bd, run_bd)):
     for suite in SUITES:
         for nb in SIZES:
@@ -166,7 +166,7 @@ for name, nn, run in (("bidir blind", None, run_bb),
 
 # ═══════════════════════════════ TABLE ═════════════════════════════════════
 methods = ["fwd blind A*", "fwd lstar/astar", "fwd lgbfs/gbfs",
-           "bidir blind", "bidir learned"]
+           "bidir Manhattan", "bidir learned"]
 for suite in SUITES:
     print(f"\n[TILES-H2H] ===== TABLE ({suite}; trained on 5x5, "
           f"budget={MAX_ITERS}) =====", flush=True)

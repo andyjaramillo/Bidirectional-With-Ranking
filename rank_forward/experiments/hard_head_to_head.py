@@ -158,7 +158,7 @@ def eval_bd(nn, boards):
     return summ(iters, solved)
 
 
-for name, nn in (("bidir blind", None), ("bidir learned", model_bd)):
+for name, nn in (("bidir Manhattan", None), ("bidir learned", model_bd)):
     for nb in BOXES:
         bs = get_eval_set(nb)
         t1 = time.time()
@@ -170,7 +170,7 @@ for name, nn in (("bidir blind", None), ("bidir learned", model_bd)):
 
 # ─────────────────────────────── TABLE ─────────────────────────────────────
 methods = ["fwd blind A*", "fwd lstar/astar", "fwd lgbfs/gbfs",
-           "bidir blind", "bidir learned"]
+           "bidir Manhattan", "bidir learned"]
 print(f"\n[HARD-H2H] ========== GENERALIZATION TABLE (trained on 3-box, "
       f"budget={MAX_ITERS}, full goal) ==========", flush=True)
 print(f"{'method':18s} " + " ".join(f"{f'{nb} boxes':>21s}" for nb in BOXES),

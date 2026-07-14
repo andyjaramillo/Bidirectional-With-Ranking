@@ -763,28 +763,58 @@ def rolling_mean(xs, w):
 # contributes a real training signal (analysis/build_solvable_benchmark.py).
 # Tiles: scramble-from-goal training set (analysis/build_tiles_benchmark.py),
 # solvable by construction.
-if DOMAIN_NAME.startswith("tiles"):
+if DOMAIN_NAME.startswith("tilesrg"):
+    # Random-goal tiles: each line is start(n*n) + goal(n*n); a puzzle is the
+    # (start, goal) pair the domain factory unpacks.
+    from game.getData import DATA_DIR
+    _tn = DOMAIN.n
+    puzzles = []
+    with open(os.path.join(DATA_DIR, f"tilesRG{_tn}_train.txt")) as _f:
+        for line in _f:
+            v = [int(x) for x in line.split()]
+            if len(v) != 2 * _tn * _tn:
+                continue
+            start = np.array(v[:_tn * _tn]).reshape(_tn, _tn)
+            goal = np.array(v[_tn * _tn:]).reshape(_tn, _tn)
+            puzzles.append((start, goal))
+    puzzles = puzzles[:N_TOTAL]
+    print(f"Using {len(puzzles)} tilesRG{_tn} (start,goal) training pairs.")
+elif DOMAIN_NAME.startswith("tiles"):
     from game.getData import DATA_DIR
     _tn = DOMAIN.n
     with open(os.path.join(DATA_DIR, f"tiles{_tn}_train.txt")) as _f:
         puzzles = [np.array([int(v) for v in line.split()]).reshape(_tn, _tn)
                    for line in _f if line.strip()][:N_TOTAL]
     print(f"Using {len(puzzles)} tiles{_tn} training puzzles.")
+elif os.environ.get("SOKOBAN_TRAIN_FILE"):
+    # Arbitrary Sokoban board file (100 ints/line), e.g. the same-goal set.
+    with open(os.environ["SOKOBAN_TRAIN_FILE"]) as _f:
+        puzzles = [np.array([int(v) for v in line.split()]).reshape(10, 10)
+                   for line in _f if line.strip()][:N_TOTAL]
+    print(f"Using {len(puzzles)} Sokoban puzzles from "
+          f"{os.environ['SOKOBAN_TRAIN_FILE']}.")
 else:
     puzzles = get_solvable_data(limit=N_TOTAL)
     print(f"Using {len(puzzles)} solvable puzzles from the filtered dataset.")
 
 
 # ── Phase A: baseline (no NN) ──────────────────────────────────────────────
-print("\n[Baseline] Solving all puzzles without NN for reference …")
-base_iters, base_times = [], []
-t0 = time.time()
-for p in puzzles:
-    _, s, dt = run_search(p, None)
-    base_iters.append(s.iteration)
-    base_times.append(dt)
-print(f"  done in {time.time()-t0:.1f}s  mean iters={np.mean(base_iters):.1f}  "
-      f"median iters={np.median(base_iters):.1f}")
+# SKIP_BASELINE=yes bypasses the blind reference pass (used only for the
+# printed speedup ratios). The curves protocol computes its own blind arm, so
+# this pass would be redundant; skipping ~halves the bidir arm's wall time.
+if os.environ.get("SKIP_BASELINE", "no").lower() == "yes":
+    base_iters, base_times = [1] * len(puzzles), [0.0] * len(puzzles)
+    print("\n[Baseline] SKIPPED (SKIP_BASELINE=yes)")
+else:
+    print("\n[Baseline] Solving all puzzles without NN for reference …")
+    base_iters, base_times = [], []
+    t0 = time.time()
+    for p in puzzles:
+        _, s, dt = run_search(p, None)
+        base_iters.append(s.iteration)
+        base_times.append(dt)
+    print(f"  done in {time.time()-t0:.1f}s  mean iters={np.mean(base_iters):.1f}  "
+          f"median iters={np.median(base_iters):.1f}")
 
 
 # ── Model(s): training model on TRAIN_DEVICE, CPU twin for search ──────────
@@ -840,6 +870,10 @@ buffer = ReplayBuffer(capacity=BUFFER_CAP)
 
 # ── Phase B: online solve-then-train ───────────────────────────────────────
 online_iters, online_times = [], []
+# Per-instance curve records for the online-curves protocol (curves_rg.py):
+# (n, solved, expansions=closed_f+closed_b, plan_len). No train/test split —
+# every instance is held-out at the moment it is solved.
+curve_records = []
 loss_hist = []
 offpath_added = []  # per-puzzle count of off-path samples harvested
 total_updates = 0
@@ -866,6 +900,9 @@ for n, p in enumerate(puzzles):
         collect_reverse_walk_pairs(s, buffer, _rng, n, revwalk_len_at(n))
     solve_iters = s.first_meeting_iter if s.first_meeting_iter is not None else s.iteration
     online_iters.append(solve_iters)
+    curve_records.append((n, path is not None,
+                          len(s.closed_f) + len(s.closed_b),
+                          (len(path) - 1) if path else -1))
     online_times.append(dt)
     if n_pairs > 0:
         seen.append(n)

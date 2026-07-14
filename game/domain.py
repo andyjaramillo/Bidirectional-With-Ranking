@@ -151,12 +151,38 @@ class TileDomain(Domain):
         return {"in_channels": self.nn_channels, "encode_fn": self.encode_board}
 
 
+class TileRGDomain(TileDomain):
+    """Random-goal sliding-tile (game/SlidingTileGameRG.py). An instance is a
+    (start, goal) pair; the backward game is seeded at the instance goal. Same
+    size-invariant displacement encoding as TileDomain (a fixed canonical-frame
+    featurization of each board — valid for arbitrary goals since the pairwise
+    net compares encode(start) against encode(goal))."""
+
+    def __init__(self, n: int = 4):
+        super().__init__(n)
+        self.name = f"tilesRG{n}"
+
+    def make_forward(self, instance):
+        from game.SlidingTileGameRG import SlidingTileGameRG
+        start, goal = instance
+        return SlidingTileGameRG(start, goal, isBackward=False)
+
+    def make_backward(self, instance):
+        from game.SlidingTileGameRG import SlidingTileGameRG
+        start, goal = instance
+        # Backward search runs the same dynamics seeded at the goal, heading
+        # for the start (moves self-inverse ⇒ frames coincide).
+        return SlidingTileGameRG(goal, start, isBackward=True)
+
+
 def get_domain(name: str = "sokoban") -> Domain:
     """Resolve a domain by name (used by env-knob-driven entrypoints).
-    Tile domains parse their size from the name: "tiles5", "tiles7", ..."""
+    Tile domains parse their size from the name: "tiles5", "tilesRG4", ..."""
     name = (name or "sokoban").lower()
     if name in ("sokoban", "sok"):
         return SokobanDomain()
+    if name.startswith("tilesrg"):
+        return TileRGDomain(int(name[len("tilesrg"):] or "4"))
     if name.startswith("tiles"):
         return TileDomain(int(name[len("tiles"):] or "5"))
     raise ValueError(f"unknown domain: {name!r}")

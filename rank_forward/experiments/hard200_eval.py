@@ -88,7 +88,7 @@ run_bb = runlog.run_dir("sokoban", "bidir_blind", 0, dict(BASE_CFG, method="bidi
 runlog.save_config(run_bb, dict(BASE_CFG, method="bidir_blind"))
 t0 = time.time()
 it, sv = eval_bd(None, boards)
-log("bidir blind", it, sv, run_bb)
+log("bidir Manhattan", it, sv, run_bb)
 print(f"           ({time.time()-t0:.0f}s)", flush=True)
 
 for tag, ckpt in (("bidir learned", "model_bidir.pt"),
@@ -108,7 +108,7 @@ for tag, ckpt in (("bidir learned", "model_bidir.pt"),
 print(f"\n[HARD200] ===== hard{HARD_KEEP} (budget={MAX_ITERS}, full goal) =====",
       flush=True)
 print(f"{'method':22s} {'solved':>9s} {'median':>9s} {'mean':>9s}", flush=True)
-for tag in ("fwd lstar/astar", "fwd lgbfs/gbfs", "bidir blind",
+for tag in ("fwd lstar/astar", "fwd lgbfs/gbfs", "bidir Manhattan",
             "bidir learned", "bidir hs64"):
     r = results.get(tag)
     if r:

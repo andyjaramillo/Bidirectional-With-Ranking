@@ -66,7 +66,10 @@ class ForwardSearch:
             domain = SokobanDomain()
         self.domain = domain
         self.game = domain.make_forward(puzzle)
-        self.start = np.asarray(puzzle)
+        # The instance may be a single board (Sokoban) or a (start, goal) pair
+        # (random-goal domains); the START board is the forward game's puzzle.
+        # For Sokoban this equals np.asarray(puzzle) (byte-identical).
+        self.start = np.asarray(self.game.puzzle)
         self.heuristic = heuristic
         self.use_g_in_f = use_g_in_f
         self.use_deadlock = use_deadlock

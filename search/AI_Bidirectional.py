@@ -60,7 +60,6 @@ class BidirectionalF2FSearch:
             domain = SokobanDomain()
         self.domain = domain
         self.game_name = domain.name
-        self.puzzle = puzzle
         self.nn = nn
         # Factorized (quasi)metric heuristic? If so, h(x,y)=dist(phi(x),phi(y))
         # with each state embedded ONCE and cached per solve — re-scoring a node
@@ -72,7 +71,13 @@ class BidirectionalF2FSearch:
         self._emb_cache: Dict[Tuple[bool, Optional[str]], "object"] = {}
 
         # ── Game instances (via the domain factory) ────────────────────
+        # The instance the domain receives may be a single board (Sokoban:
+        # the goal is encoded in it) or a (start, goal) pair (random-goal
+        # domains). Either way, the actual START board — used as self.puzzle
+        # for hashing/keys/blind-h below — is the forward game's puzzle. For
+        # Sokoban this equals the raw arg (byte-identical to the old code).
         self.forward_game, self.backward_game = domain.make_games(puzzle)
+        self.puzzle = self.forward_game.puzzle
 
         # ── Open lists: min-heap of (f, neg_g, hash) ──────────────────
         # neg_g breaks f-ties in favour of deeper (larger g) nodes.

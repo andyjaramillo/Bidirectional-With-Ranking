@@ -476,3 +476,85 @@ block, not to the 5-seed reference above. Full details in each results dir.
   types. The 1-D potential-collapse diagnosis explains the asym-L1 arm but NOT
   the IQE arm (collapse-resistant by construction, still blind) — consistent
   with the ceiling being the pooled single-board embedding, not the head.
+
+## MM baseline (Holte et al. 2016) — new comparison arm (2026-07-13)
+
+`search/mm_search.py` adds **MM** ("Bidirectional Search That Is Guaranteed to
+Meet in the Middle", Holte, Felner, Sharon & Sturtevant, AAAI 2016) as a
+comparison baseline, integrated exactly like the forward (Chrestien) arm:
+takes `domain=`, batched heuristic callables, ForwardSearch's counting
+contract (one increment per productive expansion; failures at spent budget),
+edge costs via a `cost_fn` hook + `eps` = min edge cost (no hardwired +1).
+Front-to-END: priority `pr(n) = max(g+h, 2g)`, expand the side attaining
+`C = min(prmin_F, prmin_B)`, meetings checked on generation (full-state key,
+forward frame), terminate on the paper's bound
+`U <= max(C, fmin_F, fmin_B, gmin_F + gmin_B + eps)`.
+
+Protocol notes:
+- **"Solved" = the optimality proof fires**, not the first meeting — MM is an
+  optimal algorithm and the proof cost IS the comparison point.
+  `first_meeting_iter` is recorded separately; the driver reports
+  `met_unproven` (met within budget but couldn't prove) per arm.
+- MM solves the EXACT bidirectional problem (start -> backward-seed state;
+  Sokoban full goal, tiles exact board) — directly comparable to the
+  bidirectional arms, and to forward `full_goal=True` on Sokoban.
+- Arms: `mm_blind` ("MM, blind (h=0)" = MM0), `mm_manhattan` (front-to-end
+  pairwise `evaluateBoard`, admissible), `mm_learned` (a FROZEN pairwise bidir
+  checkpoint queried front-to-end under the directed convention:
+  `h_F(n)=nn(n->goal)`, `h_B(n)=nn(start->flip(n))`; with inadmissible h the
+  proof is heuristic too — MM degrades to satisficing, same setting as every
+  other arm). MM-analytic has nothing to train, so the online curves protocol
+  does not apply; an MM arm would slot into `curves_rg.py` as a second static
+  null like `manhattan` if ever wanted.
+
+Driver: `rank_forward/experiments/mm_head_to_head.py`
+(`MM_DOMAIN=tilesRG4|tilesRG5|tiles5|sokoban`(=hard200, budget 50k),
+`MM_NEVAL`, `MM_MAX_ITERS`, `MM_REFS`, `MM_BIDIR_CKPT`; persists via runlog).
+Learned forward/bidir rows are read from runlog, never retrained. Smoke test
+`tests/test_mm.py` verifies path validity + cost-optimality against
+Manhattan-A* on tilesRG4 and Sokoban (full goal). No shared code touched
+(new files only), so Sokoban byte-identity is unaffected.
+
+Smoke observations (NOT reference numbers; 5 tilesRG4 / 2 hard200 boards):
+MM-Manhattan ~ bidir-Manhattan on shallow tilesRG4 (median 88 vs 69); on
+hard200 at 20k budget MM blind/Manhattan fail where MM-learned solves —
+expect MM to pay a visible proof premium vs the satisficing arms.
+
+### MM results (2026-07-13, seed 0, all eval-only from saved checkpoints)
+
+10 runs via `mm_head_to_head.py`; every in-run reference reproduced the stored
+row exactly, so the MM rows drop into the existing tables apples-to-apples.
+Cells `solved/median` (median expansions over solved; failures at cap).
+
+| set | MM(Man) | MM(learn) | MM0 | bidir-Man | bidir-learn |
+|-----|---------|-----------|-----|-----------|-------------|
+| tilesRG4 test  | 199/73  | 198/204 | 165/858  | 200/64  | 198/113 |
+| tilesRG5 test  | 187/95  | 157/448 | 81/690   | 190/114 | 180/174 |
+| tiles5 test    | 129/153 | 134/466 | 47/1129  | 156/251 | 162/227 |
+| tiles6 test    | 142/255 | 127/281 | 44/466   | 151/227 | 141/157 |
+| tiles7 test    | 153/134 | 113/250 | 49/1160  | 166/219 | 122/148 |
+| tiles5 testhard| 2/-     | 2/-     | 0/-      | 11/-    | 8/-     |
+| tiles6 testhard| 3/-     | 1/-     | 0/-      | 6/-     | -       |
+| tiles7 testhard| 7/-     | 0/-     | 0/-      | 8/-     | 0/-     |
+| sokoban hard200| 130/32k | 189/10449| 129/32k | 200/12469| 200/2728|
+| samegoal       | 200/381 | 200/85  | 200/387  | 200/333 | 200/66  |
+
+Conclusions:
+1. **As a baseline** MM's balancing+meet-in-the-middle rule does NOT beat our
+   F2F meeting rule on the shared heuristic — MM(Manhattan) trails bidir-
+   Manhattan on solve rate in every set (competitive but behind on random-goal
+   tiles, MM's literature home turf).
+2. **As an upgrade** (MM-balancing wrapped around our learned h) MM(learned)
+   is a downgrade on all tiles + same-goal; its ONE strong showing is Sokoban
+   hard200 (189/200, jumping past analytic MM's 130) — still short of
+   bidir-learned's 200/200. The balancing idea has a pulse on hard/diverse
+   instances but is not a win.
+3. **Goal-diversity axis holds for MM too**: relatively strongest on
+   random-goal tiles + hard200, weakest on fixed-goal (tiles*_test, samegoal).
+4. **testhard** (plans 60-140) is brutal for MM: the optimality-PROOF
+   requirement means 0-7/200 within 10k where even bidir-Manhattan gets 6-11.
+
+Curves (#7) NOT run: gated on MM(learned) looking promising on tilesRG4 (#3),
+which it did not (downgrade). The curves stream is the goal-diverse tiles
+setting where MM(learned) underperforms; hard200 (its one bright spot) is not
+a curves setting. Revisit only if the hard200 result motivates it.
